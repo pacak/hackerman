@@ -17,9 +17,9 @@ fn to_table<'a>(toml: &'a mut Document, path: &[&str]) -> anyhow::Result<&'a mut
             .ok_or_else(|| anyhow::anyhow!("Expected table"))?;
         entry.set_implicit(true);
     }
-
     Ok(entry)
 }
+
 pub fn set_dependencies<P>(
     manifest_path: P,
     g: &PackageGraph,
@@ -30,6 +30,13 @@ where
 {
     let kind = "dependencies";
     let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+
+    if !toml["package"]["metadata"]["hackerman"][kind].is_none() {
+        anyhow::bail!(
+            "{:?} already contains changes, restore the original files before applying a new hack",
+            manifest_path
+        );
+    }
 
     for (package_id, feats) in patch.iter() {
         let dep = g.metadata(package_id)?;
@@ -49,7 +56,6 @@ where
             Some(t) => bak.insert(name, t),
             None => bak.insert(name, value(false)),
         };
-
         bak.set_position(999);
     }
 
