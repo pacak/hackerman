@@ -32,7 +32,14 @@ where
     let kind = "dependencies";
     let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
 
-    if !toml["package"]["metadata"]["hackerman"][kind].is_none() {
+    let stash = (|| {
+        toml.get("package")?
+            .as_table()?
+            .get("hackerman")?
+            .as_table()?
+            .get("stash")
+    })();
+    if stash.is_some() {
         anyhow::bail!(
             "{:?} already contains changes, restore the original files before applying a new hack",
             manifest_path
@@ -55,7 +62,10 @@ where
     }
     table.sort_values();
 
-    let stash_table = to_table(&mut toml, &["package", "metadata", "hackerman", kind])?;
+    let stash_table = to_table(
+        &mut toml,
+        &["package", "metadata", "hackerman", "stash", kind],
+    )?;
     for (name, old) in changes {
         match old {
             Some(t) => stash_table.insert(name, t),
@@ -78,7 +88,7 @@ where
 
     let kind = "dependencies";
 
-    let table = to_table(&mut toml, &["package", "metadata", "hackerman"])?;
+    let table = to_table(&mut toml, &["package", "metadata", "hackerman", "stash"])?;
 
     let stash_table = if let Some(Item::Table(stash_table)) = table.remove(kind) {
         stash_table

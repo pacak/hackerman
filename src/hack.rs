@@ -250,6 +250,6 @@ fn hacked(meta: &guppy::JsonValue) -> Option<bool> {
     meta.as_object()?
         .get("hackerman")?
         .as_object()?
-        .get("dependencies");
+        .get("stash");
     Some(true)
 }
