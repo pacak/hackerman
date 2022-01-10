@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use bpaf::*;
 use tracing::Level;
 
@@ -108,7 +110,7 @@ fn dry_run() -> Parser<bool> {
         .switch()
 }
 
-pub fn options() -> OptionParser<(Level, Command)> {
+pub fn options() -> OptionParser<(Level, OsString, Command)> {
     Info::default().for_parser(command(
         "hackerman",
         Some("A set of commands to do strange things to the workspace"),
@@ -116,14 +118,22 @@ pub fn options() -> OptionParser<(Level, Command)> {
     ))
 }
 
+fn custom_manifest() -> Parser<OsString> {
+    long("manifest-path")
+        .help("Path to Cargo.toml")
+        .argument_os("PATH")
+        .fallback("Cargo.toml".into())
+}
+
 // For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
 // command.
-fn options_inner() -> OptionParser<(Level, Command)> {
+fn options_inner() -> OptionParser<(Level, OsString, Command)> {
     let v = verbosity();
     let cmd = explain_cmd()
         .or_else(hack_cmd())
         .or_else(restore_cmd())
         .or_else(verify_cmd());
-    let opts = tuple!(v, cmd);
+    let custom_manifest = custom_manifest();
+    let opts = tuple!(v, custom_manifest, cmd);
     Info::default().for_parser(opts)
 }
