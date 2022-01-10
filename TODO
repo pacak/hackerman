@@ -1,4 +1,3 @@
-1. unify explain feature with explain package
-2. derpy cli
-3. dev and build unification
-4. non linux systems
+- unify explain feature with explain package
+- dev and build unification
+- non linux systems
