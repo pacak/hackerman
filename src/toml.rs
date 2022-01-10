@@ -1,6 +1,7 @@
 use guppy::{graph::PackageGraph, PackageId};
 use std::{collections::BTreeMap, path::Path};
-use toml_edit::{table, value, Array, Document, InlineTable, Table, Value};
+use toml_edit::{table, value, Array, Document, InlineTable, Item, Table, Value};
+use tracing::debug;
 
 fn to_table<'a>(toml: &'a mut Document, path: &[&str]) -> anyhow::Result<&'a mut Table> {
     let mut entry = toml
@@ -52,6 +53,7 @@ where
 
         changes.push((name, table.insert(name, value(new_dep))));
     }
+    table.sort_values();
 
     let stash_table = to_table(&mut toml, &["package", "metadata", "hackerman", kind])?;
     for (name, old) in changes {
@@ -59,10 +61,10 @@ where
             Some(t) => stash_table.insert(name, t),
             None => stash_table.insert(name, value(false)),
         };
-        stash_table.set_position(999);
     }
+    stash_table.sort_values();
+    stash_table.set_position(999);
 
-    to_table(&mut toml, &[kind])?.sort_values();
     std::fs::write(&manifest_path, toml.to_string())?;
 
     Ok(())
