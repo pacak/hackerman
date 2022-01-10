@@ -38,11 +38,11 @@ where
         );
     }
 
+    let table = to_table(&mut toml, &[kind])?;
+    let mut changes = Vec::new();
     for (package_id, feats) in patch.iter() {
         let dep = g.metadata(package_id)?;
         let name = dep.name();
-
-        let table = to_table(&mut toml, &[kind])?;
 
         let mut new_dep = InlineTable::new();
         new_dep.insert("version", dep.version().to_string().into());
@@ -50,13 +50,16 @@ where
         feats_arr.extend(feats.iter().copied());
         new_dep.insert("features", Value::Array(feats_arr));
 
-        let old = table.insert(name, value(new_dep));
-        let bak = to_table(&mut toml, &["package", "metadata", "hackerman", kind])?;
+        changes.push((name, table.insert(name, value(new_dep))));
+    }
+
+    let stash_table = to_table(&mut toml, &["package", "metadata", "hackerman", kind])?;
+    for (name, old) in changes {
         match old {
-            Some(t) => bak.insert(name, t),
-            None => bak.insert(name, value(false)),
+            Some(t) => stash_table.insert(name, t),
+            None => stash_table.insert(name, value(false)),
         };
-        bak.set_position(999);
+        stash_table.set_position(999);
     }
 
     to_table(&mut toml, &[kind])?.sort_values();
