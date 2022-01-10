@@ -59,6 +59,7 @@ pub fn check(package_graph: &PackageGraph) -> anyhow::Result<()> {
                 println!("\t{} {} {:?}", dep.name(), dep.version(), feats);
             }
         }
+        anyhow::bail!("Changes are required");
     }
     Ok(())
 }
