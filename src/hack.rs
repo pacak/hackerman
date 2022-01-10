@@ -3,7 +3,7 @@ use guppy::{
     PackageId,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::NormalOnly;
 
@@ -224,4 +224,32 @@ pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<Apply> {
     } else {
         Ok(Apply::Success)
     }
+}
+
+pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
+    let mut changes = false;
+    for package in package_graph
+        .query_workspace()
+        .resolve_with(NormalOnly)
+        .packages(DependencyDirection::Forward)
+    {
+        if hacked(package.metadata_table()).unwrap_or(false) {
+            changes = true;
+            info!("Restoring {:?}", package.manifest_path());
+            crate::toml::restore_dependencies(package.manifest_path())?;
+        }
+    }
+    if !changes {
+        warn!("Nothing to do!");
+    }
+
+    Ok(())
+}
+
+fn hacked(meta: &guppy::JsonValue) -> Option<bool> {
+    meta.as_object()?
+        .get("hackerman")?
+        .as_object()?
+        .get("dependencies");
+    Some(true)
 }

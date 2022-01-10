@@ -69,3 +69,36 @@ where
 
     Ok(())
 }
+
+pub fn restore_dependencies<P>(manifest_path: P) -> anyhow::Result<()>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+
+    let kind = "dependencies";
+
+    let table = to_table(&mut toml, &["package", "metadata", "hackerman"])?;
+
+    let stash_table = if let Some(Item::Table(stash_table)) = table.remove(kind) {
+        stash_table
+    } else {
+        anyhow::bail!("Corrupted stash table in {:?}", manifest_path);
+    };
+
+    let table = to_table(&mut toml, &[kind])?;
+    for (key, item) in stash_table.into_iter() {
+        if item.is_inline_table() || item.is_str() {
+            debug!("Restoring dependency {}: {}", key, item.to_string());
+            table.insert(&key, item);
+        } else if item.is_bool() {
+            debug!("Removing dependency {}", key);
+            table.remove(&key);
+        } else {
+            anyhow::bail!("Corrupted key {:?}: {}", key, item.to_string());
+        }
+    }
+    table.sort_values();
+    std::fs::write(&manifest_path, toml.to_string())?;
+    Ok(())
+}

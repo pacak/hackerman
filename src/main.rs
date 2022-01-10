@@ -44,7 +44,10 @@ fn main() -> anyhow::Result<()> {
                 break;
             }
         },
-        Command::Restore(_) => todo!(),
+        Command::Restore(_) => {
+            let g = guppy_graph(&manifest)?;
+            hack::restore(g)?;
+        }
         Command::Verify => {
             let g = guppy_graph(&manifest)?;
             hack::check(&g)?;
