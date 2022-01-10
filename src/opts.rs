@@ -109,12 +109,21 @@ fn dry_run() -> Parser<bool> {
 }
 
 pub fn options() -> OptionParser<(Level, Command)> {
+    Info::default().for_parser(command(
+        "hackerman",
+        Some("A set of commands to do strange things to the workspace"),
+        options_inner(),
+    ))
+}
+
+// For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
+// command.
+fn options_inner() -> OptionParser<(Level, Command)> {
     let v = verbosity();
     let cmd = explain_cmd()
         .or_else(hack_cmd())
         .or_else(restore_cmd())
         .or_else(verify_cmd());
     let opts = tuple!(v, cmd);
-
-    bpaf::Info::default().for_parser(opts)
+    Info::default().for_parser(opts)
 }
