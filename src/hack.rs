@@ -24,6 +24,12 @@ fn intersect_workspace<'a>(
                     continue;
                 }
                 let parent = link.from();
+
+                // no need to unify proc macro dependencies it seems
+                if parent.is_proc_macro() {
+                    continue;
+                }
+
                 if parent.in_workspace() {
                     res.insert(parent.id());
                 } else if !checking.contains(parent.id()) {

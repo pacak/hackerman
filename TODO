@@ -1,3 +1,4 @@
 - unify explain feature with explain package
 - dev and build unification
 - non linux systems
+- verbose explain
