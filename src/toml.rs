@@ -1,5 +1,8 @@
 use guppy::{graph::PackageGraph, PackageId};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 use toml_edit::{table, value, Array, Document, InlineTable, Item, Table, Value};
 use tracing::debug;
 
@@ -24,7 +27,7 @@ fn to_table<'a>(toml: &'a mut Document, path: &[&str]) -> anyhow::Result<&'a mut
 pub fn set_dependencies<P>(
     manifest_path: P,
     g: &PackageGraph,
-    patch: &BTreeMap<&PackageId, Vec<&str>>,
+    patch: &BTreeMap<&PackageId, BTreeSet<&str>>,
 ) -> anyhow::Result<()>
 where
     P: AsRef<Path> + std::fmt::Debug,
@@ -55,8 +58,13 @@ where
         let mut new_dep = InlineTable::new();
         new_dep.insert("version", dep.version().to_string().into());
         let mut feats_arr = Array::new();
-        feats_arr.extend(feats.iter().copied());
-        new_dep.insert("features", Value::Array(feats_arr));
+        feats_arr.extend(feats.iter().copied().filter(|&f| f != "default"));
+        if !feats_arr.is_empty() {
+            new_dep.insert("features", Value::Array(feats_arr));
+        }
+        if !feats.contains("default") {
+            new_dep.insert("default-features", false.into());
+        }
 
         changes.push((name, table.insert(name, value(new_dep))));
     }

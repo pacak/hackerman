@@ -1,8 +1,7 @@
 use std::ffi::OsStr;
 
 use cargo_hackerman::{
-    explain,
-    hack::{self, Apply},
+    explain, hack,
     opts::{Command, Hack},
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -38,12 +37,10 @@ fn main() -> anyhow::Result<()> {
                 None => explain::package(&g, &e.krate, e.version.as_deref())?,
             }
         }
-        Command::Hack(Hack { dry }) => loop {
+        Command::Hack(Hack { dry }) => {
             let g = guppy_graph(&manifest)?;
-            if hack::apply(&g, dry)? == Apply::Success {
-                break;
-            }
-        },
+            hack::apply(&g, dry)?;
+        }
         Command::Restore(_) => {
             let g = guppy_graph(&manifest)?;
             hack::restore(g)?;

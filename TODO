@@ -2,3 +2,5 @@
 - dev and build unification
 - non linux systems
 - verbose explain
+- things are hidden inside DependencyReq in PackageLink
+- explain for what added features to ahash
