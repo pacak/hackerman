@@ -1,11 +1,40 @@
 use guppy::graph::feature::{CrossLink, FeatureId, FeatureQuery, FeatureResolver};
 use guppy::graph::{DependencyDirection, PackageGraph, PackageQuery, PackageResolver};
-use guppy::PackageId;
+use guppy::{DependencyKind, PackageId};
 
 pub mod explain;
 pub mod hack;
 pub mod opts;
 pub mod toml;
+
+struct NonMacroKind(DependencyKind);
+impl guppy::graph::feature::FeatureResolver<'_> for NonMacroKind {
+    fn accept(
+        &mut self,
+        query: &guppy::graph::feature::FeatureQuery,
+        link: guppy::graph::feature::CrossLink,
+    ) -> bool {
+        link.status_for_kind(self.0).is_present()
+            && match query.direction() {
+                DependencyDirection::Forward => !link.from().package().is_proc_macro(),
+                DependencyDirection::Reverse => !link.to().package().is_proc_macro(),
+            }
+    }
+}
+
+impl PackageResolver<'_> for NonMacroKind {
+    fn accept(
+        &mut self,
+        query: &guppy::graph::PackageQuery,
+        link: guppy::graph::PackageLink,
+    ) -> bool {
+        link.req_for_kind(self.0).is_present()
+            && match query.direction() {
+                DependencyDirection::Forward => !link.from().is_proc_macro(),
+                DependencyDirection::Reverse => !link.to().is_proc_macro(),
+            }
+    }
+}
 
 struct NormalOnly;
 impl<'g> FeatureResolver<'g> for NormalOnly {

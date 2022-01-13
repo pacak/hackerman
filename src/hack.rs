@@ -1,11 +1,11 @@
 use guppy::{
-    graph::{feature::StandardFeatures, DependencyDirection, PackageGraph, PackageResolver},
+    graph::{feature::StandardFeatures, DependencyDirection, PackageGraph},
     DependencyKind, PackageId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace, trace_span, warn};
 
-use crate::NormalOnly;
+use crate::{NonMacroKind, NormalOnly};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
 
@@ -27,36 +27,8 @@ pub fn check(package_graph: &PackageGraph) -> anyhow::Result<()> {
     Ok(())
 }
 
-struct NonMacroKind(DependencyKind);
-impl guppy::graph::feature::FeatureResolver<'_> for NonMacroKind {
-    fn accept(
-        &mut self,
-        query: &guppy::graph::feature::FeatureQuery,
-        link: guppy::graph::feature::CrossLink,
-    ) -> bool {
-        link.status_for_kind(self.0).is_present()
-            && match query.direction() {
-                DependencyDirection::Forward => !link.from().package().is_proc_macro(),
-                DependencyDirection::Reverse => !link.to().package().is_proc_macro(),
-            }
-    }
-}
-
-impl PackageResolver<'_> for NonMacroKind {
-    fn accept(
-        &mut self,
-        query: &guppy::graph::PackageQuery,
-        link: guppy::graph::PackageLink,
-    ) -> bool {
-        link.req_for_kind(self.0).is_present()
-            && match query.direction() {
-                DependencyDirection::Forward => !link.from().is_proc_macro(),
-                DependencyDirection::Reverse => !link.to().is_proc_macro(),
-            }
-    }
-}
-
 /// if a imports b directly or indirectly
+///
 fn depends_on(
     package_graph: &PackageGraph,
     a: &PackageId,
