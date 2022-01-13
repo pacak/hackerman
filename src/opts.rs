@@ -8,6 +8,7 @@ pub enum Command {
     Explain(Explain),
     Hack(Hack),
     Restore(Restore),
+    Duplicates,
     Verify,
 }
 
@@ -90,6 +91,12 @@ fn verify_cmd() -> Parser<Command> {
     .map(|_| Command::Verify)
 }
 
+fn duplicates_cmd() -> Parser<Command> {
+    let descr = "Lists all the duplicates in the workspace";
+    let info = Info::default().descr(descr).for_parser(Parser::pure(()));
+    command("dupes", Some(descr), info).map(|_| Command::Duplicates)
+}
+
 fn verbosity() -> Parser<Level> {
     short('v')
         .help("increase verbosity, can be used several times")
@@ -132,6 +139,7 @@ fn options_inner() -> OptionParser<(Level, OsString, Command)> {
     let cmd = explain_cmd()
         .or_else(hack_cmd())
         .or_else(restore_cmd())
+        .or_else(duplicates_cmd())
         .or_else(verify_cmd());
     let custom_manifest = custom_manifest();
     let opts = tuple!(v, custom_manifest, cmd);

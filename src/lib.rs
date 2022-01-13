@@ -2,6 +2,7 @@ use guppy::graph::feature::{CrossLink, FeatureId, FeatureQuery, FeatureResolver}
 use guppy::graph::{DependencyDirection, PackageGraph, PackageQuery, PackageResolver};
 use guppy::{DependencyKind, PackageId};
 
+pub mod dupes;
 pub mod explain;
 pub mod hack;
 pub mod opts;
@@ -36,6 +37,7 @@ impl PackageResolver<'_> for NonMacroKind {
     }
 }
 
+// TODO: DROP
 struct NormalOnly;
 impl<'g> FeatureResolver<'g> for NormalOnly {
     fn accept(&mut self, _query: &FeatureQuery<'g>, link: CrossLink<'g>) -> bool {

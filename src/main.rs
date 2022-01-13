@@ -1,9 +1,10 @@
 use std::ffi::OsStr;
 
 use cargo_hackerman::{
-    explain, hack,
+    dupes, explain, hack,
     opts::{Command, Hack},
 };
+use guppy::DependencyKind;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn guppy_graph(path: &OsStr) -> anyhow::Result<guppy::graph::PackageGraph> {
@@ -29,6 +30,7 @@ fn main() -> anyhow::Result<()> {
         .with(fmt_layer)
         .init();
 
+    let kind = DependencyKind::Normal;
     match cmd {
         Command::Explain(e) => {
             let g = guppy_graph(&manifest)?;
@@ -48,6 +50,10 @@ fn main() -> anyhow::Result<()> {
         Command::Verify => {
             let g = guppy_graph(&manifest)?;
             hack::check(&g)?;
+        }
+        Command::Duplicates => {
+            let g = guppy_graph(&manifest)?;
+            dupes::list(&g, kind)?;
         }
     }
     Ok(())
