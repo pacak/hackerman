@@ -1,11 +1,9 @@
-use guppy::{
-    graph::{feature::StandardFeatures, DependencyDirection, PackageGraph},
-    DependencyKind, PackageId,
-};
+use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
+use guppy::{DependencyKind, PackageId};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace, trace_span, warn};
 
-use crate::{NonMacroKind, NormalOnly};
+use crate::query::*;
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
 
@@ -29,7 +27,7 @@ pub fn check(package_graph: &PackageGraph) -> anyhow::Result<()> {
 
 /// if a imports b directly or indirectly
 ///
-fn depends_on(
+fn ws_depends_on(
     package_graph: &PackageGraph,
     a: &PackageId,
     b: &PackageId,
@@ -40,17 +38,18 @@ fn depends_on(
     }
     Ok(package_graph
         .query_forward([a])?
-        .resolve_with(NonMacroKind(kind))
+        .resolve_with(Walker(kind, Place::Workspace))
         .contains(b)?)
 }
 
 fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     let kind = DependencyKind::Normal;
+
     let feature_graph = package_graph.feature_graph();
 
     let workspace_set = feature_graph
         .query_workspace(StandardFeatures::Default)
-        .resolve_with(NonMacroKind(kind));
+        .resolve_with(Walker(kind, Place::Both));
 
     let mut needs_fixing = BTreeMap::new();
 
@@ -61,19 +60,27 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
         // of a given kind, ignoring macro dependen
         for dep in feature_graph
             .query_directed([member.default_feature_id()], DependencyDirection::Forward)?
-            .resolve_with_fn(|_q, link| {
-                !link.to().package().in_workspace()
-                    && !link.to().package().is_proc_macro()
-                    && link.status_for_kind(kind).is_present()
-            })
+            .resolve_with(Walker(kind, Place::Both))
             .packages_with_features(DependencyDirection::Forward)
         {
             // dependency comes with a different set of features - it needs to be fixed
             if workspace_set.features_for(dep.package().id())?.as_ref() != Some(&dep) {
-                needs_fixing.insert(dep.package().id(), dep);
+                needs_fixing.entry(dep.package().id()).or_insert_with(|| {
+                    trace!(
+                        name = %dep.package().name(),
+                        version = %dep.package().version(),
+                        "needs fixing"
+                    );
+                    dep
+                });
             }
         }
     }
+    if needs_fixing.is_empty() {
+        info!("Nothing to do");
+        return Ok(Changeset::default());
+    }
+    info!("{} package(s) needs fixing", needs_fixing.len());
 
     let mut patches_to_add: Changeset = BTreeMap::new();
 
@@ -89,11 +96,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             .collect::<BTreeSet<_>>();
         for entry_point in package_graph
             .query_reverse([dep])?
-            .resolve_with_fn(|_, link| {
-                !link.from().is_proc_macro()
-                    && !link.to().in_workspace()
-                    && link.req_for_kind(kind).is_present()
-            })
+            .resolve_with(Walker(kind, Place::External))
             .filter(DependencyDirection::Forward, |p| p.in_workspace())
             .packages(DependencyDirection::Forward)
         {
@@ -106,12 +109,11 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             // subtract all the features already available at that point
             for present in feature_graph
                 .query_forward([entry_point.default_feature_id()])?
-                .resolve_with(NonMacroKind(kind))
+                .resolve_with(Walker(kind, Place::Both))
                 .features_for(dep)?
                 .iter()
                 .flat_map(|x| x.features())
             {
-                trace!("- {:?}", present);
                 vals.remove(present);
             }
 
@@ -138,10 +140,26 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             }
 
             // and include anything requested by the entry point itself which might include default
-            for link in entry_point.direct_links() {
-                if link.to().id() == dep && link.req_for_kind(kind).is_present() {
-                    for feat in link.req_for_kind(kind).features() {
-                        vals.insert(feat);
+            if kind == DependencyKind::Development {
+                for link in entry_point.direct_links() {
+                    if link.to().id() == dep
+                        && link.req_for_kind(DependencyKind::Normal).is_present()
+                        || link.req_for_kind(DependencyKind::Development).is_present()
+                    {
+                        for feat in link.req_for_kind(DependencyKind::Normal).features() {
+                            vals.insert(feat);
+                        }
+                        for feat in link.req_for_kind(DependencyKind::Development).features() {
+                            vals.insert(feat);
+                        }
+                    }
+                }
+            } else {
+                for link in entry_point.direct_links() {
+                    if link.to().id() == dep && link.req_for_kind(kind).is_present() {
+                        for feat in link.req_for_kind(kind).features() {
+                            vals.insert(feat);
+                        }
                     }
                 }
             }
@@ -158,11 +176,15 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
                 .insert(dep, vals);
         }
     }
+    info!(
+        "Need to patch {} Cargo.toml file(s) (before trimming)",
+        patches_to_add.len()
+    );
 
     // and the last iteration is going across the workspace removing features unified by children
     for member in package_graph
         .query_workspace()
-        .resolve_with(NonMacroKind(kind))
+        .resolve_with(Walker(kind, Place::Both))
         .packages(DependencyDirection::Reverse)
     {
         if !member.in_workspace() {
@@ -176,17 +198,22 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
                 // we look for all the packages that import it
                 //
                 // TODO: depends_on is slow with all the nested loops
-                if depends_on(package_graph, patch_id, member.id(), kind)? {
+                if ws_depends_on(package_graph, patch_id, member.id(), kind)? {
                     patch.retain(|dep, feats| child_patch.get(dep) != Some(feats));
                 }
             }
         }
     }
+    info!(
+        "Need to patch {} Cargo.toml file(s) (after trimming)",
+        patches_to_add.len()
+    );
 
     Ok(patches_to_add)
 }
 
 pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<()> {
+    let kind = DependencyKind::Normal;
     let map = get_changeset(package_graph)?;
     if dry {
         if map.is_empty() {
@@ -220,7 +247,7 @@ pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<()> {
 
     for package in package_graph
         .query_workspace()
-        .resolve_with(NormalOnly)
+        .resolve_with(Walker(kind, Place::Workspace))
         .packages(DependencyDirection::Reverse)
     {
         if !package.in_workspace() {
@@ -237,10 +264,11 @@ pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<()> {
 }
 
 pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
+    let kind = DependencyKind::Normal;
     let mut changes = false;
     for package in package_graph
         .query_workspace()
-        .resolve_with(NormalOnly)
+        .resolve_with(Walker(kind, Place::Workspace))
         .packages(DependencyDirection::Forward)
     {
         if hacked(package.metadata_table()).unwrap_or(false) {

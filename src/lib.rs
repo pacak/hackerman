@@ -1,5 +1,4 @@
-use guppy::graph::feature::{CrossLink, FeatureQuery, FeatureResolver};
-use guppy::graph::{DependencyDirection, PackageGraph, PackageQuery, PackageResolver};
+use guppy::graph::{DependencyDirection, PackageGraph, PackageResolver};
 use guppy::{DependencyKind, PackageId};
 
 pub mod dump;
@@ -7,6 +6,7 @@ pub mod dupes;
 pub mod explain;
 pub mod hack;
 pub mod opts;
+pub mod query;
 pub mod toml;
 
 struct NonMacroKind(DependencyKind);
@@ -35,20 +35,6 @@ impl PackageResolver<'_> for NonMacroKind {
                 DependencyDirection::Forward => !link.from().is_proc_macro(),
                 DependencyDirection::Reverse => !link.to().is_proc_macro(),
             }
-    }
-}
-
-// TODO: DROP
-struct NormalOnly;
-impl<'g> FeatureResolver<'g> for NormalOnly {
-    fn accept(&mut self, _query: &FeatureQuery<'g>, link: CrossLink<'g>) -> bool {
-        link.normal().is_always()
-    }
-}
-
-impl<'g> PackageResolver<'g> for NormalOnly {
-    fn accept(&mut self, _query: &PackageQuery<'g>, link: guppy::graph::PackageLink<'g>) -> bool {
-        link.normal().is_present()
     }
 }
 
