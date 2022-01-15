@@ -30,9 +30,13 @@ pub struct Restore {
 }
 
 fn explain() -> Parser<Explain> {
+    fn is_version(v: &str) -> bool {
+        v == "*" || semver::Version::parse(v).is_ok()
+    }
+
     let krate = positional("CRATE");
-    let feature = positional_if("FEATURE", |v| semver::Version::parse(v).is_err());
-    let version = positional_if("VERSION", |v| semver::Version::parse(v).is_ok());
+    let feature = positional_if("FEATURE", |v| !is_version(v));
+    let version = positional_if("VERSION", is_version);
     construct!(Explain {
         krate,
         feature,

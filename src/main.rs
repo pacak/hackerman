@@ -33,10 +33,12 @@ fn main() -> anyhow::Result<()> {
     let kind = DependencyKind::Normal;
     match cmd {
         Command::Explain(e) => {
+            let kind = DependencyKind::Normal;
+
             let g = guppy_graph(&manifest)?;
             match e.feature {
-                Some(feat) => explain::feature(&g, &e.krate, e.version.as_deref(), &feat)?,
-                None => explain::package(&g, &e.krate, e.version.as_deref())?,
+                Some(feat) => explain::feature(&g, &e.krate, e.version.as_deref(), &feat, kind)?,
+                None => explain::package(&g, &e.krate, e.version.as_deref(), kind)?,
             }
         }
         Command::Hack(Hack { dry }) => {

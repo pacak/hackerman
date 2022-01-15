@@ -1,7 +1,8 @@
-use guppy::graph::feature::{CrossLink, FeatureId, FeatureQuery, FeatureResolver};
+use guppy::graph::feature::{CrossLink, FeatureQuery, FeatureResolver};
 use guppy::graph::{DependencyDirection, PackageGraph, PackageQuery, PackageResolver};
 use guppy::{DependencyKind, PackageId};
 
+pub mod dump;
 pub mod dupes;
 pub mod explain;
 pub mod hack;
@@ -95,13 +96,4 @@ fn resolve_package<'a>(
             anyhow::bail!("Package {} {} is not in use", name, version);
         }
     }
-}
-
-fn resolve_feature<'a>(
-    g: &'a PackageGraph,
-    name: &'a str,
-    mversion: Option<&str>,
-    feature: &'a str,
-) -> anyhow::Result<FeatureId<'a>> {
-    Ok(FeatureId::new(resolve_package(g, name, mversion)?, feature))
 }

@@ -1,6 +1,5 @@
-- unify explain feature with explain package
 - dev and build unification
 - non linux systems
-- verbose explain
-- things are hidden inside DependencyReq in PackageLink
-- explain for what added features to ahash
+- outdated but with minor versions
+- re-add proc macro stuff to new code (explain)
+- explain with normal + dev

@@ -8,8 +8,10 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.52"
 bpaf = { git = "https://github.com/pacak/bpaf", rev = "448ec93" }
+dot = "0.1.4"
 guppy = "0.12.6"
 semver = "1.0.4"
+petgraph = "0.6.0"
 toml_edit = "0.12.4"
 tracing = "0.1.29"
 tracing-subscriber = { version = "0.3.5", default-features = false, features = [ "alloc", "env-filter", "registry", "std", "fmt" ] }

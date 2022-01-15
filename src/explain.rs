@@ -1,75 +1,42 @@
-use crate::{resolve_feature, NormalOnly};
-use guppy::graph::{DependencyDirection, PackageGraph};
-use guppy::platform::PlatformStatus;
-use guppy::PackageId;
-use std::collections::{HashMap, HashSet};
-
-use tracing::trace;
-
 use crate::resolve_package;
+use guppy::graph::feature::{FeatureGraph, FeatureId};
+use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata};
+use guppy::DependencyKind;
+use std::collections::{BTreeMap, BTreeSet};
+
+fn packages_by_name_and_version<'a>(
+    package_graph: &'a PackageGraph,
+    name: &'a str,
+    version: Option<&'a str>,
+) -> anyhow::Result<Vec<PackageMetadata<'a>>> {
+    let mut packages = package_graph
+        .resolve_package_name(name)
+        .packages(DependencyDirection::Forward)
+        .collect::<Vec<_>>();
+    let present = !packages.is_empty();
+    if let Some(version) = version {
+        packages.retain(|p| p.version().to_string() == version);
+        if present && packages.is_empty() {
+            anyhow::bail!("Package {} v{} is not in use", name, version);
+        }
+    }
+    if packages.is_empty() {
+        anyhow::bail!("Package {} is not in use", name)
+    }
+    Ok(packages)
+}
 
 pub fn package(
     package_graph: &PackageGraph,
-    pkg: &str,
+    name: &str,
     version: Option<&str>,
+    kind: DependencyKind,
 ) -> anyhow::Result<()> {
-    let pid = resolve_package(package_graph, pkg, version)?;
-    let mut to_check = vec![pid];
-    let mut queued = HashSet::new();
-    let mut causes: HashMap<&PackageId, (&PackageId, PlatformStatus)> = HashMap::new();
-    let mut ws_causes: HashSet<&PackageId> = HashSet::new();
-    loop {
-        let next = match to_check.pop() {
-            Some(package_id) => package_graph.metadata(package_id)?,
-            None => {
-                let mut ws_causes = ws_causes.iter().collect::<Vec<_>>();
-                ws_causes.sort();
+    let packages = packages_by_name_and_version(package_graph, name, version)?;
 
-                if ws_causes.is_empty() {
-                    anyhow::bail!("It's a mystery why {:?} is imported", pkg);
-                }
-                println!("{:?} is a dependency due to", pkg);
-
-                for package_id in ws_causes.iter() {
-                    let p = package_graph.metadata(package_id)?;
-                    print!("{}", p.name());
-
-                    let mut pid = p.id();
-                    while let Some((n, s)) = causes.get(pid) {
-                        let p = package_graph.metadata(n)?;
-                        if s.is_always() {
-                            print!(" -?> {} {}", p.name(), p.version());
-                        } else {
-                            print!(" -> {} {}", p.name(), p.version());
-                        }
-                        pid = n;
-                    }
-                    println!();
-                }
-                return Ok(());
-            }
-        };
-
-        if next.in_workspace() {
-            ws_causes.insert(next.id());
-            continue;
-        }
-
-        for link in next.direct_links_directed(DependencyDirection::Reverse) {
-            let id = link.from().id();
-            if queued.contains(id) {
-                continue;
-            }
-
-            to_check.push(id);
-            queued.insert(id);
-            let stat = link.normal().status().optional_status();
-            let to = link.to().id();
-            causes.insert(link.from().id(), (to, stat));
-
-            trace!(?id, cause = ?next.id(), "Queuing new import to check");
-        }
-    }
+    let f = packages.iter().map(|p| FeatureId::base(p.id())).collect();
+    let feature_graph = package_graph.feature_graph();
+    feature_ids(&feature_graph, f, kind)
 }
 
 pub fn feature(
@@ -77,66 +44,61 @@ pub fn feature(
     pkg: &str,
     version: Option<&str>,
     feat: &str,
+    kind: DependencyKind,
 ) -> anyhow::Result<()> {
     let feature_graph = package_graph.feature_graph();
 
-    //    let fid = resolve_feature(&package_graph, "serde_json", None, "float_roundtrip")?;
-    let fid = resolve_feature(package_graph, pkg, version, feat)?;
-    if feature_graph.is_default_feature(fid)? {
-        println!("Feature {:?} is enabled in {:?} by default", feat, pkg);
-        return Ok(());
-    }
+    let fid = FeatureId::new(resolve_package(package_graph, pkg, version)?, feat);
+    feature_ids(&feature_graph, vec![fid], kind)
+}
 
-    let mut to_check = vec![fid.package_id()];
-    let mut queued = HashSet::new();
-    let mut causes = HashSet::new();
-    loop {
-        let next = match to_check.pop() {
-            Some(x) => package_graph.metadata(x)?,
-            None => {
-                if causes.is_empty() {
-                    anyhow::bail!("It's a mystery why {:?} on {:?} is required", feat, pkg);
-                }
-                println!("Feature {:?} on {:?} is requested by", feat, pkg);
-                for package_id in causes.iter() {
-                    let package = package_graph.metadata(package_id)?;
-                    print!("- {} {} ", package.name(), package.version());
-                    if package.in_workspace() {
-                        println!("which is a workspace package ({})", package.manifest_path());
-                    } else {
-                        println!();
-                    }
-                }
-                return Ok(());
-            }
-        };
-        let feature_subgraph = feature_graph
-            .query_forward([next.default_feature_id()])?
-            .resolve_with(NormalOnly);
+/// Follow from given features towards the earliest intersection
+/// with the workspace and plot it as DOT dep graph
+fn feature_ids(
+    feature_graph: &FeatureGraph,
+    fid: Vec<FeatureId>,
+    kind: DependencyKind,
+) -> anyhow::Result<()> {
+    let roots = fid.iter().map(|f| f.package_id()).collect::<BTreeSet<_>>();
+    let set = feature_graph
+        .query_reverse(fid)?
+        .resolve_with_fn(|_, link| {
+            link.status_for_kind(kind).is_present() && !link.to().package().in_workspace()
+        });
 
-        if feature_subgraph.contains(fid)? {
-            trace!(cause = next.name(), "Adding a new temporary cause");
-            causes.retain(|prev| !package_graph.depends_on(prev, next.id()).unwrap());
+    let mut nodes = BTreeMap::new();
+    let mut edges = BTreeMap::new();
+    let mut features = BTreeMap::new();
 
-            if !causes
-                .iter()
-                .any(|prev| package_graph.depends_on(next.id(), prev).unwrap())
-            {
-                causes.insert(next.id().clone());
-            }
-        }
+    for link in set.cross_links(DependencyDirection::Forward) {
+        nodes
+            .entry(link.from().package().id())
+            .or_insert_with(|| link.from().package());
 
-        for link in next.direct_links_directed(DependencyDirection::Reverse) {
-            let id = link.from().id();
-            if !queued.contains(id) {
-                to_check.push(id);
-                queued.insert(id);
-                trace!(
-                    child = link.to().name(),
-                    parent = link.from().name(),
-                    "Queuing new import to check"
-                );
-            }
+        nodes
+            .entry(link.to().package().id())
+            .or_insert_with(|| link.to().package());
+
+        edges
+            .entry((link.from().package_id(), link.to().package_id()))
+            .or_insert_with(Vec::new)
+            .push(link);
+
+        if let Some(feature) = link.to().feature_id().feature() {
+            features
+                .entry(link.to().package_id())
+                .or_insert_with(BTreeSet::new)
+                .insert(feature);
         }
     }
+
+    let graph = crate::dump::FeatDepGraph {
+        nodes,
+        edges,
+        features,
+        roots,
+    };
+
+    dot::render(&graph, &mut std::io::stdout())?;
+    Ok(())
 }

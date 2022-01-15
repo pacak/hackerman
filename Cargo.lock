@@ -40,7 +40,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bpaf",
+ "dot",
  "guppy",
+ "petgraph",
  "semver",
  "toml_edit",
  "tracing",
@@ -100,6 +102,12 @@ name = "debug-ignore"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "223089cd5a4e4491f0a0dddd9933f9575123160cf96ca2bb56a690046ecf1745"
+
+[[package]]
+name = "dot"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a74b6c4d4a1cff5f454164363c16b72fa12463ca6b31f4b5f2035a65fa3d5906"
 
 [[package]]
 name = "either"
