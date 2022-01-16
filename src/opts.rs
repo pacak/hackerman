@@ -7,11 +7,11 @@ use tracing::Level;
 pub enum Command {
     Explain(Explain),
     Hack(Hack),
-    Restore(Restore),
+    Restore,
     Duplicates,
     Verify,
     WorkspaceTree,
-    PackageTree(String, Option<String>),
+    PackageTree(String, Option<String>, Option<String>),
     ShowPackage(String, Option<String>, Option<Focus>),
 }
 
@@ -35,16 +35,10 @@ pub struct Hack {
     pub lock: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct Restore {
-    pub dry: bool,
+fn is_version(v: &str) -> bool {
+    v == "*" || semver::Version::parse(v).is_ok()
 }
-
 fn explain() -> Parser<Explain> {
-    fn is_version(v: &str) -> bool {
-        v == "*" || semver::Version::parse(v).is_ok()
-    }
-
     let krate = positional("CRATE");
     let feature = positional_if("FEATURE", |v| !is_version(v));
     let version = positional_if("VERSION", is_version);
@@ -56,26 +50,13 @@ fn explain() -> Parser<Explain> {
 }
 
 fn explain_cmd() -> Parser<Command> {
+    let msg = "Explain why a certain crate or a feature is included in the workspace";
     let info = Info::default()
-        .descr("Explain why a certain crate or a feature is included in the workspace")
-        .header(
-            "\
-If a crate is present in several versions you need to specify the
-version of one you are interested in, otherwise it's optional.
-
-Examples:
-
-    cargo hackerman explain rand 0.8.4
-    cargo hackerman explain serde_json preserve_order",
-        )
+        .descr(msg)
+        .footer(include_str!("../doc/explain.md"))
         .for_parser(explain());
 
-    command(
-        "explain",
-        Some("Explain a dependency in the current workspace"),
-        info,
-    )
-    .map(Command::Explain)
+    command("explain", Some(msg), info).map(Command::Explain)
 }
 
 fn show_cmd() -> Parser<Command> {
@@ -111,23 +92,24 @@ fn show_cmd() -> Parser<Command> {
 }
 
 fn hack_cmd() -> Parser<Command> {
+    let msg = "Unify crate dependencies across individual crates in the workspace";
     let dry = dry_run();
     let lock = short('l')
         .long("lock")
         .help("Include dependencies checksum into stash")
         .switch();
     let info = Info::default()
-        .descr("Unify crate dependencies across individual crates in the workspace")
+        .descr(msg)
+        .footer(include_str!("../doc/hack.md"))
         .for_parser(construct!(Hack { dry, lock }));
-    command("hack", Some("Unify crate dependencies"), info).map(Command::Hack)
+    command("hack", Some(msg), info).map(Command::Hack)
 }
 
 fn restore_cmd() -> Parser<Command> {
-    let dry = dry_run();
     let info = Info::default()
         .descr("Remove crate dependency unification added by the 'hack' command")
-        .for_parser(construct!(Restore { dry }));
-    command("restore", Some("Remove unification"), info).map(Command::Restore)
+        .for_parser(Parser::pure(Command::Restore));
+    command("restore", Some("Remove unification"), info)
 }
 
 fn verify_cmd() -> Parser<Command> {
@@ -152,16 +134,19 @@ fn tree_cmd() -> Parser<Command> {
     let descr = "Display crates dependencies as a tree";
 
     let package = positional("CRATE").optional();
+    let feature = positional_if("FEATURE", |v| !is_version(v));
     let version = positional("VERSION").optional().guard(
         |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
         "You need to specify a valid semver compatible version",
     );
-    let p = tuple!(package, version);
-
-    let info = Info::default().descr(descr).for_parser(p);
+    let p = tuple!(package, feature, version);
+    let info = Info::default()
+        .descr(descr)
+        .footer(include_str!("../doc/tree.md"))
+        .for_parser(p);
     command("tree", Some(descr), info).map(|args| match args {
-        (Some(p), ver) => Command::PackageTree(p, ver),
-        (None, _) => Command::WorkspaceTree,
+        (Some(p), feat, ver) => Command::PackageTree(p, feat, ver),
+        (None, _, _) => Command::WorkspaceTree,
     })
 }
 

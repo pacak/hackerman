@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata, PackageResolver};
 use guppy::DependencyKind;
 use opts::Focus;

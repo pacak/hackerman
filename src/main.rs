@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
             let g = guppy_graph(&manifest)?;
             hack::apply(&g, dry, lock)?;
         }
-        Command::Restore(_) => {
+        Command::Restore => {
             let g = guppy_graph(&manifest)?;
             hack::restore(g)?;
         }
@@ -62,9 +62,9 @@ fn main() -> anyhow::Result<()> {
             let g = guppy_graph(&manifest)?;
             tree::workspace(&g, kind)?;
         }
-        Command::PackageTree(pkg, ver) => {
+        Command::PackageTree(pkg, feat, ver) => {
             let g = guppy_graph(&manifest)?;
-            tree::package(&g, &pkg, ver.as_deref(), kind)?;
+            tree::package(&g, &pkg, feat.as_deref(), ver.as_deref(), kind)?;
         }
         Command::ShowPackage(pkg, ver, focus) => {
             let g = guppy_graph(&manifest)?;
