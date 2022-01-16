@@ -99,6 +99,20 @@ fn feature_ids(
         roots,
     };
 
-    dot::render(&graph, &mut std::io::stdout())?;
+    #[cfg(feature = "spawn_xdot")]
+    {
+        use tempfile::NamedTempFile;
+        let mut file = NamedTempFile::new()?;
+        dot::render(&graph, &mut file)?;
+        std::process::Command::new("xdot")
+            .args([file.path()])
+            .output()?;
+    }
+
+    #[cfg(not(feature = "spawn_xdot"))]
+    {
+        dot::render(&graph, &mut std::io::stdout())?;
+    }
+
     Ok(())
 }
