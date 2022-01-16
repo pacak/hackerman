@@ -24,6 +24,7 @@ pub struct Explain {
 #[derive(Debug, Clone)]
 pub struct Hack {
     pub dry: bool,
+    pub lock: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,9 +72,13 @@ Examples:
 
 fn hack_cmd() -> Parser<Command> {
     let dry = dry_run();
+    let lock = short('l')
+        .long("lock")
+        .help("Include dependencies checksum into stash")
+        .switch();
     let info = Info::default()
         .descr("Unify crate dependencies across individual crates in the workspace")
-        .for_parser(construct!(Hack { dry }));
+        .for_parser(construct!(Hack { dry, lock }));
     command("hack", Some("Unify crate dependencies"), info).map(Command::Hack)
 }
 
@@ -109,9 +114,8 @@ fn tree_cmd() -> Parser<Command> {
     let package = positional("CRATE").optional();
     let version = positional("VERSION").optional().guard(
         |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
-        "You need to specify a version",
+        "You need to specify a valid semver compatible version",
     );
-    //        .parse(|s| s.map(|v| semver::Version::parse(&v)).transpose());
     let p = tuple!(package, version);
 
     let info = Info::default().descr(descr).for_parser(p);

@@ -3,11 +3,22 @@ use guppy::{DependencyKind, PackageId};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace, trace_span, warn};
 
-use crate::query::*;
+use crate::{query::*, toml};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
 
 pub fn check(package_graph: &PackageGraph) -> anyhow::Result<()> {
+    for package in package_graph
+        .resolve_workspace()
+        .packages(DependencyDirection::Forward)
+    {
+        let meta = package.metadata_table();
+        if !&meta["hackerman"]["lock"].is_null() {
+            debug!("Verifying checksum in {}", package.manifest_path());
+            toml::verify_checksum(package.manifest_path())?;
+        }
+    }
+
     let map = get_changeset(package_graph)?;
     if map.is_empty() {
         println!("No changes required")
@@ -212,7 +223,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     Ok(patches_to_add)
 }
 
-pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<()> {
+pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
     let kind = DependencyKind::Normal;
     let map = get_changeset(package_graph)?;
     if dry {
@@ -256,7 +267,7 @@ pub fn apply(package_graph: &PackageGraph, dry: bool) -> anyhow::Result<()> {
 
         if let Some(patch) = map.get(package.id()) {
             info!("Patching {}", package.id());
-            crate::toml::set_dependencies(package.manifest_path(), package_graph, patch)?;
+            crate::toml::set_dependencies(package.manifest_path(), package_graph, patch, lock)?;
         }
     }
 
@@ -271,7 +282,11 @@ pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
         .resolve_with(Walker(kind, Place::Workspace))
         .packages(DependencyDirection::Forward)
     {
-        if hacked(package.metadata_table()).unwrap_or(false) {
+        let hacked = package.metadata_table()["hackerman"]["stash"]
+            .as_object()
+            .is_some();
+
+        if hacked {
             changes = true;
             info!("Restoring {:?}", package.manifest_path());
             crate::toml::restore_dependencies(package.manifest_path())?;
@@ -282,12 +297,4 @@ pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-fn hacked(meta: &guppy::JsonValue) -> Option<bool> {
-    meta.as_object()?
-        .get("hackerman")?
-        .as_object()?
-        .get("stash");
-    Some(true)
 }

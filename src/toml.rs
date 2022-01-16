@@ -24,10 +24,20 @@ fn to_table<'a>(toml: &'a mut Document, path: &[&str]) -> anyhow::Result<&'a mut
     Ok(entry)
 }
 
+fn get_checksum(table: &Table) -> i64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+
+    Hash::hash(&table.to_string(), &mut hasher);
+    Hasher::finish(&hasher) as i64
+}
+
 pub fn set_dependencies<P>(
     manifest_path: P,
     g: &PackageGraph,
     patch: &BTreeMap<&PackageId, BTreeSet<&str>>,
+    lock: bool,
 ) -> anyhow::Result<()>
 where
     P: AsRef<Path> + std::fmt::Debug,
@@ -70,6 +80,14 @@ where
     }
     table.sort_values();
 
+    if lock {
+        let hash = get_checksum(table);
+        let lock_table = to_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
+        lock_table.insert(kind, value(hash));
+        lock_table.sort_values();
+        lock_table.set_position(998);
+    }
+
     let stash_table = to_table(
         &mut toml,
         &["package", "metadata", "hackerman", "stash", kind],
@@ -96,8 +114,11 @@ where
 
     let kind = "dependencies";
 
-    let table = to_table(&mut toml, &["package", "metadata", "hackerman", "stash"])?;
+    if let Some(t) = toml["package"]["metadata"]["hackerman"].as_table_mut() {
+        t.remove("lock");
+    }
 
+    let table = to_table(&mut toml, &["package", "metadata", "hackerman", "stash"])?;
     let stash_table = if let Some(Item::Table(stash_table)) = table.remove(kind) {
         stash_table
     } else {
@@ -118,5 +139,32 @@ where
     }
     table.sort_values();
     std::fs::write(&manifest_path, toml.to_string())?;
+    Ok(())
+}
+
+pub fn verify_checksum<P>(manifest_path: P) -> anyhow::Result<()>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let kind = "dependencies";
+    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+    let table = to_table(&mut toml, &[kind])?;
+
+    let checksum = get_checksum(table);
+
+    let lock_table = to_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
+    let lock = lock_table
+        .get(kind)
+        .ok_or_else(|| {
+            anyhow::anyhow!("Couldn't get saved lock value for {kind} in {manifest_path:?}",)
+        })?
+        .as_integer()
+        .expect("Invalid checksum format for {kind} in {manifest_path:?}");
+
+    if lock != checksum {
+        debug!("Expected: {lock}, actual {checksum}");
+        anyhow::bail!("Checksum mismatch for {kind} in {manifest_path:?}")
+    }
+
     Ok(())
 }

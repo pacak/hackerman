@@ -42,9 +42,9 @@ fn main() -> anyhow::Result<()> {
                 None => explain::package(&g, &e.krate, e.version.as_deref(), kind)?,
             }
         }
-        Command::Hack(Hack { dry }) => {
+        Command::Hack(Hack { dry, lock }) => {
             let g = guppy_graph(&manifest)?;
-            hack::apply(&g, dry)?;
+            hack::apply(&g, dry, lock)?;
         }
         Command::Restore(_) => {
             let g = guppy_graph(&manifest)?;
