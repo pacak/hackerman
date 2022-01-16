@@ -2,7 +2,6 @@ use std::ffi::OsString;
 
 use bpaf::*;
 use tracing::Level;
-use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[derive(Debug, Clone)]
 pub enum Command {

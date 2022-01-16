@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata, PackageResolver};
 use guppy::DependencyKind;
 use opts::Focus;
@@ -63,7 +61,7 @@ fn resolve_package<'a>(
                     );
                 }
             }
-            return Ok(pkg);
+            Ok(pkg)
         }
         _ => {
             let version = mversion.ok_or_else(|| {
