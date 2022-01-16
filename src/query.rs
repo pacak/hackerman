@@ -1,8 +1,12 @@
 use guppy::{
-    graph::{feature::FeatureResolver, DependencyDirection, PackageResolver},
+    graph::{
+        feature::FeatureResolver, DependencyDirection, PackageGraph, PackageMetadata,
+        PackageResolver,
+    },
     DependencyKind,
 };
 
+#[derive(Copy, Clone)]
 pub enum Place {
     /// Walking in workspace means we never enter external crates
     Workspace,
@@ -11,6 +15,7 @@ pub enum Place {
     /// Ignore workspace boundary
     Both,
 }
+#[derive(Copy, Clone)]
 pub struct Walker(pub DependencyKind, pub Place);
 impl<'g> FeatureResolver<'g> for Walker {
     fn accept(
@@ -90,4 +95,26 @@ impl<'g> PackageResolver<'g> for Walker {
             DependencyKind::Build => link.build().is_present(),
         }
     }
+}
+
+pub fn packages_by_name_and_version<'a>(
+    package_graph: &'a PackageGraph,
+    name: &'a str,
+    version: Option<&'a str>,
+) -> anyhow::Result<Vec<PackageMetadata<'a>>> {
+    let mut packages = package_graph
+        .resolve_package_name(name)
+        .packages(DependencyDirection::Forward)
+        .collect::<Vec<_>>();
+    let present = !packages.is_empty();
+    if let Some(version) = version {
+        packages.retain(|p| p.version().to_string() == version);
+        if present && packages.is_empty() {
+            anyhow::bail!("Package {} v{} is not in use", name, version);
+        }
+    }
+    if packages.is_empty() {
+        anyhow::bail!("Package {} is not in use", name)
+    }
+    Ok(packages)
 }

@@ -1,30 +1,9 @@
+use crate::query::{packages_by_name_and_version, Place, Walker};
 use crate::resolve_package;
 use guppy::graph::feature::{FeatureGraph, FeatureId};
-use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata};
+use guppy::graph::{DependencyDirection, PackageGraph};
 use guppy::DependencyKind;
 use std::collections::{BTreeMap, BTreeSet};
-
-fn packages_by_name_and_version<'a>(
-    package_graph: &'a PackageGraph,
-    name: &'a str,
-    version: Option<&'a str>,
-) -> anyhow::Result<Vec<PackageMetadata<'a>>> {
-    let mut packages = package_graph
-        .resolve_package_name(name)
-        .packages(DependencyDirection::Forward)
-        .collect::<Vec<_>>();
-    let present = !packages.is_empty();
-    if let Some(version) = version {
-        packages.retain(|p| p.version().to_string() == version);
-        if present && packages.is_empty() {
-            anyhow::bail!("Package {} v{} is not in use", name, version);
-        }
-    }
-    if packages.is_empty() {
-        anyhow::bail!("Package {} is not in use", name)
-    }
-    Ok(packages)
-}
 
 pub fn package(
     package_graph: &PackageGraph,
@@ -36,7 +15,8 @@ pub fn package(
 
     let f = packages.iter().map(|p| FeatureId::base(p.id())).collect();
     let feature_graph = package_graph.feature_graph();
-    feature_ids(&feature_graph, f, kind)
+    let walker = Walker(kind, Place::External);
+    feature_ids(&feature_graph, f, walker, DependencyDirection::Reverse)
 }
 
 pub fn feature(
@@ -49,26 +29,33 @@ pub fn feature(
     let feature_graph = package_graph.feature_graph();
 
     let fid = FeatureId::new(resolve_package(package_graph, pkg, version)?, feat);
-    feature_ids(&feature_graph, vec![fid], kind)
+    let walker = Walker(kind, Place::External);
+    feature_ids(
+        &feature_graph,
+        vec![fid],
+        walker,
+        DependencyDirection::Reverse,
+    )
 }
 
-/// Follow from given features towards the earliest intersection
-/// with the workspace and plot it as DOT dep graph
-fn feature_ids(
+/// Follow from given features with a walker and plot it as DOT dep graph
+pub fn feature_ids(
     feature_graph: &FeatureGraph,
     fid: Vec<FeatureId>,
-    kind: DependencyKind,
+    walker: Walker,
+    dir: DependencyDirection,
 ) -> anyhow::Result<()> {
     let roots = fid.iter().map(|f| f.package_id()).collect::<BTreeSet<_>>();
-    let set = feature_graph
-        .query_reverse(fid)?
-        .resolve_with_fn(|_, link| {
-            link.status_for_kind(kind).is_present() && !link.to().package().in_workspace()
-        });
+    let set = feature_graph.query_directed(fid, dir)?.resolve_with(walker);
+    //    let set = feature_graph.query_reverse(fid)?.resolve_with(walker);
 
     let mut nodes = BTreeMap::new();
     let mut edges = BTreeMap::new();
     let mut features = BTreeMap::new();
+
+    for &root in &roots {
+        nodes.insert(root, feature_graph.package_graph().metadata(root)?);
+    }
 
     for link in set.cross_links(DependencyDirection::Forward) {
         nodes

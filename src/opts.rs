@@ -10,6 +10,8 @@ pub enum Command {
     Restore(Restore),
     Duplicates,
     Verify,
+    WorkspaceTree,
+    PackageTree(String, Option<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +103,24 @@ fn duplicates_cmd() -> Parser<Command> {
     command("dupes", Some(descr), info).map(|_| Command::Duplicates)
 }
 
+fn tree_cmd() -> Parser<Command> {
+    let descr = "Display crates dependencies as a tree";
+
+    let package = positional("CRATE").optional();
+    let version = positional("VERSION").optional().guard(
+        |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
+        "You need to specify a version",
+    );
+    //        .parse(|s| s.map(|v| semver::Version::parse(&v)).transpose());
+    let p = tuple!(package, version);
+
+    let info = Info::default().descr(descr).for_parser(p);
+    command("tree", Some(descr), info).map(|args| match args {
+        (Some(p), ver) => Command::PackageTree(p, ver),
+        (None, _) => Command::WorkspaceTree,
+    })
+}
+
 fn verbosity() -> Parser<Level> {
     short('v')
         .help("increase verbosity, can be used several times")
@@ -144,7 +164,8 @@ fn options_inner() -> OptionParser<(Level, OsString, Command)> {
         .or_else(hack_cmd())
         .or_else(restore_cmd())
         .or_else(duplicates_cmd())
-        .or_else(verify_cmd());
+        .or_else(verify_cmd())
+        .or_else(tree_cmd());
     let custom_manifest = custom_manifest();
     let opts = tuple!(v, custom_manifest, cmd);
     Info::default().for_parser(opts)

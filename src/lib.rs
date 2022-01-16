@@ -8,6 +8,7 @@ pub mod hack;
 pub mod opts;
 pub mod query;
 pub mod toml;
+pub mod tree;
 
 struct NonMacroKind(DependencyKind);
 impl guppy::graph::feature::FeatureResolver<'_> for NonMacroKind {

@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 use cargo_hackerman::{
     dupes, explain, hack,
     opts::{Command, Hack},
+    tree,
 };
 use guppy::DependencyKind;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -56,6 +57,14 @@ fn main() -> anyhow::Result<()> {
         Command::Duplicates => {
             let g = guppy_graph(&manifest)?;
             dupes::list(&g, kind)?;
+        }
+        Command::WorkspaceTree => {
+            let g = guppy_graph(&manifest)?;
+            tree::workspace(&g, kind)?;
+        }
+        Command::PackageTree(pkg, ver) => {
+            let g = guppy_graph(&manifest)?;
+            tree::package(&g, &pkg, ver.as_deref(), kind)?;
         }
     }
     Ok(())
