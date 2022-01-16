@@ -35,7 +35,7 @@ pub fn feature(
 ) -> anyhow::Result<()> {
     let feature_graph = package_graph.feature_graph();
 
-    let fid = FeatureId::new(resolve_package(package_graph, pkg, version)?, feat);
+    let fid = FeatureId::new(resolve_package(package_graph, pkg, version)?.id(), feat);
     let place = if package_graph.metadata(fid.package_id())?.in_workspace() {
         Place::Both
     } else {

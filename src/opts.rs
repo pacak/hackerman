@@ -2,6 +2,7 @@ use std::ffi::OsString;
 
 use bpaf::*;
 use tracing::Level;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -12,6 +13,14 @@ pub enum Command {
     Verify,
     WorkspaceTree,
     PackageTree(String, Option<String>),
+    ShowPackage(String, Option<String>, Option<Focus>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Focus {
+    Manifest,
+    Readme,
+    Documentation,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +77,38 @@ Examples:
         info,
     )
     .map(Command::Explain)
+}
+
+fn show_cmd() -> Parser<Command> {
+    let msg = "Show information about a package";
+    let package = positional("PACKAGE");
+    let version = positional("VERSION")
+        .guard(
+            |s| semver::Version::parse(s).is_ok(),
+            "A valid version required",
+        )
+        .optional();
+    let show_manifest = short('m')
+        .long("manifest")
+        .help("Show manifest")
+        .req_flag(Focus::Manifest);
+    let show_readme = short('r')
+        .long("readme")
+        .help("Show readme")
+        .req_flag(Focus::Readme);
+    let show_doc = short('d')
+        .long("doc")
+        .help("Open documentation URL")
+        .req_flag(Focus::Documentation);
+    let focus = show_manifest
+        .or_else(show_readme)
+        .or_else(show_doc)
+        .optional();
+    use Command::ShowPackage;
+    let info = Info::default()
+        .descr(msg)
+        .for_parser(apply!(ShowPackage(package, version, focus)));
+    command("show", Some(msg), info)
 }
 
 fn hack_cmd() -> Parser<Command> {
@@ -169,7 +210,8 @@ fn options_inner() -> OptionParser<(Level, OsString, Command)> {
         .or_else(restore_cmd())
         .or_else(duplicates_cmd())
         .or_else(verify_cmd())
-        .or_else(tree_cmd());
+        .or_else(tree_cmd())
+        .or_else(show_cmd());
     let custom_manifest = custom_manifest();
     let opts = tuple!(v, custom_manifest, cmd);
     Info::default().for_parser(opts)
