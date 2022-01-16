@@ -1,5 +1,7 @@
 - dev and build unification
 - non linux systems
-- outdated but with minor versions
+- outdated but with minor versions upgrades
 - re-add proc macro stuff to new code (explain)
 - explain with normal + dev
+- encode hash in stash + verify it on check
+- check for hack present in explain/tree

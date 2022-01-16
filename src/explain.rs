@@ -15,7 +15,14 @@ pub fn package(
 
     let f = packages.iter().map(|p| FeatureId::base(p.id())).collect();
     let feature_graph = package_graph.feature_graph();
-    let walker = Walker(kind, Place::External);
+
+    let place = if packages.iter().any(|p| p.in_workspace()) {
+        Place::Both
+    } else {
+        Place::External
+    };
+
+    let walker = Walker(kind, place);
     feature_ids(&feature_graph, f, walker, DependencyDirection::Reverse)
 }
 
@@ -29,7 +36,12 @@ pub fn feature(
     let feature_graph = package_graph.feature_graph();
 
     let fid = FeatureId::new(resolve_package(package_graph, pkg, version)?, feat);
-    let walker = Walker(kind, Place::External);
+    let place = if package_graph.metadata(fid.package_id())?.in_workspace() {
+        Place::Both
+    } else {
+        Place::External
+    };
+    let walker = Walker(kind, place);
     feature_ids(
         &feature_graph,
         vec![fid],
