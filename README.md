@@ -28,7 +28,7 @@ With two members: `mega`
 name = "mega"
 
 [dependencies]
-potatoer = { version = "0.2.1", features "mega" }
+potatoer = { version = "0.2.1", features = ["mega"] }
 ```
 And `potato`
 ```toml
@@ -36,7 +36,7 @@ And `potato`
 name = "potato"
 
 [dependencies]
-potatoer = { version = "0.2.1", features "potato" }
+potatoer = { version = "0.2.1", features = ["potato"] }
 ```
 both both of which depend on a common third party crate `potatoer` but with different features:
 `mega` is interested in `"mega"` aspect, `potato" is interested in `"potato"` one.
