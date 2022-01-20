@@ -1,6 +1,10 @@
 use guppy::graph::feature::FeatureId;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
+use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
+use petgraph::visit::EdgeRef;
+use petgraph::Graph;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use tracing::{debug, info, trace, trace_span, warn};
@@ -239,7 +243,256 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     Ok(patches_to_add)
 }
 
-pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
+#[derive(Clone, Hash, Ord, PartialOrd, Eq, PartialEq, Debug)]
+enum Pla {
+    Always,
+    //    Cond,
+}
+
+type FeatureMap<'a> = BTreeMap<FeatureId<'a>, BTreeSet<(FeatureId<'a>, Pla)>>;
+
+fn follow(here: &Platform, status: PlatformStatus) -> Option<Pla> {
+    match status {
+        PlatformStatus::Never => None,
+        PlatformStatus::Always => Some(Pla::Always),
+        PlatformStatus::PlatformDependent { eval } => match eval.eval(here) {
+            guppy::platform::EnabledTernary::Disabled => None,
+            guppy::platform::EnabledTernary::Unknown => todo!(),
+            guppy::platform::EnabledTernary::Enabled => Some(Pla::Always),
+        },
+    }
+}
+
+// -----------------------------------------------------------------------------------------------
+
+struct FG<'a>(&'a Graph<FeatureId<'a>, Pla>);
+
+impl<'a> dot::GraphWalk<'a, FeatureId<'a>, (FeatureId<'a>, FeatureId<'a>)> for FG<'a> {
+    fn nodes(&'a self) -> dot::Nodes<'a, FeatureId<'a>> {
+        Cow::from(self.0.node_weights().cloned().collect::<Vec<_>>())
+    }
+
+    fn edges(&'a self) -> dot::Edges<'a, (FeatureId<'a>, FeatureId<'a>)> {
+        Cow::from(
+            self.0
+                .edge_references()
+                .map(|e| {
+                    let src = e.source();
+                    let tgt = e.target();
+                    (self.0[src], self.0[tgt])
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn source(&'a self, edge: &(FeatureId<'a>, FeatureId<'a>)) -> FeatureId<'a> {
+        edge.0
+    }
+
+    fn target(&'a self, edge: &(FeatureId<'a>, FeatureId<'a>)) -> FeatureId<'a> {
+        edge.1
+    }
+}
+
+impl<'a> dot::Labeller<'a, FeatureId<'a>, (FeatureId<'a>, FeatureId<'a>)> for FG<'a> {
+    fn graph_id(&'a self) -> dot::Id<'a> {
+        dot::Id::new("features").unwrap()
+    }
+
+    fn node_id(&'a self, n: &FeatureId<'a>) -> dot::Id<'a> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        n.to_string().hash(&mut hasher);
+        let x = hasher.finish();
+
+        dot::Id::new(format!("n{}", x)).unwrap()
+    }
+
+    fn node_label(&'a self, node: &FeatureId<'a>) -> dot::LabelText<'a> {
+        let s = node.package_id().to_string();
+        let name = s.split(' ').collect::<Vec<_>>();
+
+        let fmt = format!("{}\n{}", name[0], node.feature().unwrap_or("n/a"));
+
+        dot::LabelText::label(fmt)
+    }
+}
+// -----------------------------------------------------------------------------------------------
+
+pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::Result<()> {
+    let feature_graph = package_graph.feature_graph();
+
+    let here = Platform::current()?;
+
+    use petgraph::Graph;
+
+    let mut g = Graph::new();
+
+    let mut nodes = BTreeMap::new();
+    for pkt in package_graph.workspace().iter() {
+        nodes.insert(
+            pkt.default_feature_id(),
+            g.add_node(pkt.default_feature_id()),
+        );
+    }
+
+    feature_graph
+        .query_workspace(StandardFeatures::Default)
+        .resolve_with_fn(|_query, link| {
+            let parent_node = link.from();
+            let child_node = link.to();
+            let mut to_follow = None;
+
+            // first we try to figure out if we want to follow this link.
+            // proc-macro links are always ignored
+            // dev links outside of the workspace are ignored
+            // otherwise links are followed depending on the Platform
+            if !child_node.package().is_proc_macro() {
+                to_follow = follow(&here, link.normal());
+                if to_follow.is_none() && parent_node.package().in_workspace() {
+                    to_follow = follow(&here, link.dev());
+                }
+            }
+
+            // ignored
+            let cond = match to_follow {
+                Some(cond) => cond,
+                None => return false,
+            };
+
+            if link.to().feature_id() == link.to().package().default_feature_id() {
+                let mut first_visit = false;
+                let default_ix = *nodes.entry(link.to().feature_id()).or_insert_with(|| {
+                    first_visit = true;
+                    g.add_node(link.to().feature_id())
+                });
+
+                // track dependencies within workspace
+
+                if first_visit {
+                    for f in feature_graph
+                        .query_forward([link.to().feature_id()])
+                        .unwrap()
+                        .resolve_with_fn(|_query, _link| false)
+                        .feature_ids(DependencyDirection::Forward)
+                    {
+                        if f != link.to().feature_id() {
+                            let to = *nodes.entry(f).or_insert_with(|| g.add_node(f));
+                            g.add_edge(default_ix, to, Pla::Always);
+                        }
+                    }
+                };
+            }
+
+            let from = *nodes
+                .entry(link.from().feature_id())
+                .or_insert_with(|| g.add_node(link.from().feature_id()));
+            let to = *nodes
+                .entry(link.to().feature_id())
+                .or_insert_with(|| g.add_node(link.to().feature_id()));
+
+            if !link.to().feature_id().is_base() {
+                let base = FeatureId::base(link.to().package_id());
+                nodes.entry(base).or_insert_with(|| {
+                    let base_node = g.add_node(base);
+                    g.add_edge(base_node, from, Pla::Always);
+                    base_node
+                });
+            }
+
+            //assert!(!g.contains_edge(from, to));
+            trace!(
+                "{:3}: -> {:3}: {}-> {} / {cond:?}",
+                from.index(),
+                to.index(),
+                link.from().feature_id(),
+                link.to().feature_id()
+            );
+            g.add_edge(from, to, cond);
+
+            true
+        });
+
+    dot::render(&FG(&g), &mut std::io::stdout())?;
+
+    #[cfg(feature = "spawn_xdot")]
+    {
+        use tempfile::NamedTempFile;
+        let mut file = NamedTempFile::new()?;
+        //        dot::render(&graph, &mut file)?;
+        dot::render(&FG(&g), &mut file)?;
+        std::process::Command::new("xdot")
+            .args([file.path()])
+            .output()?;
+    }
+
+    let mut m: FeatureMap = BTreeMap::new();
+
+    let mut frontline_edges = Vec::new();
+    let mut frontline_nodes = Vec::new();
+    loop {
+        frontline_edges.clear();
+        frontline_nodes.clear();
+
+        for external in g.externals(petgraph::Direction::Outgoing) {
+            let feature = g[external];
+
+            let feature_deps = m.remove(&feature).unwrap_or_default();
+            use petgraph::visit::EdgeRef;
+
+            frontline_nodes.push(external);
+            //            println!("{feature}");
+            for edge in g.edges_directed(external, petgraph::Direction::Incoming) {
+                frontline_edges.push(edge.id());
+
+                let usage = edge.weight();
+                let user = g[edge.source()];
+
+                // TODO: THIS should be transformed with usage!
+                let mut victim = feature_deps.clone();
+                let set = m.entry(user).or_insert_with(BTreeSet::new);
+                set.append(&mut victim);
+                set.insert((feature, usage.clone()));
+
+                //                println!("\t{} : {:?}", user, usage);
+                //                println!("{:?}, should be {:?}", m[&user], feature_deps);
+            }
+
+            //            progress = true;
+        }
+
+        println!();
+        for (k, vs) in m.iter() {
+            println!("{k}");
+            for v in vs.iter() {
+                println!("\t{v:?}");
+            }
+        }
+
+        println!(
+            "{} edges / {} nodes to remove",
+            frontline_edges.len(),
+            frontline_nodes.len()
+        );
+        if frontline_edges.is_empty() {
+            break;
+        } else {
+            for e in frontline_edges.iter() {
+                g.remove_edge(*e);
+            }
+            for n in frontline_nodes.iter() {
+                g.remove_node(*n);
+            }
+        }
+
+        println!();
+        println!();
+    }
+
+    Ok(())
+}
+
+pub fn apply1(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
     let kind = DependencyKind::Normal;
     let map = get_changeset(package_graph)?;
     if dry {
