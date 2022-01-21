@@ -22,7 +22,7 @@ pub fn package(
         Place::External
     };
 
-    let walker = Walker(kind, place);
+    let walker = Walker(place);
     feature_ids(&feature_graph, f, walker, DependencyDirection::Reverse)
 }
 
@@ -41,7 +41,7 @@ pub fn feature(
     } else {
         Place::External
     };
-    let walker = Walker(kind, place);
+    let walker = Walker(place);
     feature_ids(
         &feature_graph,
         vec![fid],

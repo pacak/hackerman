@@ -1,9 +1,5 @@
-use guppy::{
-    graph::{
-        feature::FeatureResolver, DependencyDirection, PackageGraph, PackageMetadata,
-        PackageResolver,
-    },
-    DependencyKind,
+use guppy::graph::{
+    feature::FeatureResolver, DependencyDirection, PackageGraph, PackageMetadata, PackageResolver,
 };
 
 #[derive(Copy, Clone)]
@@ -16,24 +12,16 @@ pub enum Place {
     Both,
 }
 #[derive(Copy, Clone)]
-pub struct Walker(pub DependencyKind, pub Place);
+pub struct Walker(pub Place);
 impl<'g> FeatureResolver<'g> for Walker {
     fn accept(
         &mut self,
-        query: &guppy::graph::feature::FeatureQuery<'g>,
+        _query: &guppy::graph::feature::FeatureQuery<'g>,
         link: guppy::graph::feature::CrossLink<'g>,
     ) -> bool {
-        let (f, t) = match query.direction() {
-            DependencyDirection::Forward => (link.from(), link.to()),
-            DependencyDirection::Reverse => (link.to(), link.from()),
-        };
+        let t = link.to();
 
-        // proc macro follow different rules, skip them here
-        if f.package().is_proc_macro() {
-            return false;
-        }
-
-        match self.1 {
+        match self.0 {
             Place::Workspace => {
                 // don't leave workspace
                 if !t.package().in_workspace() {
@@ -42,38 +30,25 @@ impl<'g> FeatureResolver<'g> for Walker {
             }
             Place::External => {
                 // don't go inside of the workspace
-                if f.package().in_workspace() {
+                if t.package().in_workspace() {
                     return false;
                 }
             }
             _ => {}
         }
 
-        match self.0 {
-            DependencyKind::Normal => link.normal().is_present(),
-            DependencyKind::Development => link.dev().is_present() || link.normal().is_present(),
-            DependencyKind::Build => link.status_for_kind(self.0).is_present(),
-        }
+        link.normal().is_present() || link.build().is_present()
     }
 }
 
 impl<'g> PackageResolver<'g> for Walker {
     fn accept(
         &mut self,
-        query: &guppy::graph::PackageQuery<'g>,
+        _query: &guppy::graph::PackageQuery<'g>,
         link: guppy::graph::PackageLink<'g>,
     ) -> bool {
-        let (f, t) = match query.direction() {
-            DependencyDirection::Forward => (link.from(), link.to()),
-            DependencyDirection::Reverse => (link.to(), link.from()),
-        };
-
-        // proc macro follow different rules, skip them here
-        if f.is_proc_macro() {
-            return false;
-        }
-
-        match self.1 {
+        let t = link.to();
+        match self.0 {
             Place::Workspace => {
                 // don't leave workspace
                 if !t.in_workspace() {
@@ -82,18 +57,14 @@ impl<'g> PackageResolver<'g> for Walker {
             }
             Place::External => {
                 // don't go inside of the workspace
-                if f.in_workspace() {
+                if t.in_workspace() {
                     return false;
                 }
             }
             _ => {}
         }
 
-        match self.0 {
-            DependencyKind::Normal => link.normal().is_present(),
-            DependencyKind::Development => link.dev().is_present() || link.build().is_present(),
-            DependencyKind::Build => link.build().is_present(),
-        }
+        link.normal().is_present() || link.build().is_present()
     }
 }
 

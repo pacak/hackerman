@@ -49,7 +49,7 @@ fn ws_depends_on(
     }
     Ok(package_graph
         .query_forward([a])?
-        .resolve_with(Walker(kind, Place::Workspace))
+        .resolve_with(Walker(Place::Workspace))
         .contains(b)?)
 }
 
@@ -60,7 +60,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
 
     let workspace_set = feature_graph
         .query_workspace(StandardFeatures::Default)
-        .resolve_with(Walker(kind, Place::Both));
+        .resolve_with(Walker(Place::Both));
 
     let mut needs_fixing = BTreeMap::new();
 
@@ -71,7 +71,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
         // of a given kind, ignoring macro dependen
         for dep in feature_graph
             .query_directed([member.default_feature_id()], DependencyDirection::Forward)?
-            .resolve_with(Walker(kind, Place::Both))
+            .resolve_with(Walker(Place::Both))
             .packages_with_features(DependencyDirection::Forward)
         {
             // dependency comes with a different set of features - it needs to be fixed
@@ -105,9 +105,10 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             .iter()
             .copied()
             .collect::<BTreeSet<_>>();
+
         for entry_point in package_graph
             .query_reverse([dep])?
-            .resolve_with(Walker(kind, Place::External))
+            .resolve_with(Walker(Place::External))
             .filter(DependencyDirection::Forward, |p| p.in_workspace())
             .packages(DependencyDirection::Forward)
         {
@@ -120,7 +121,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             // subtract all the features already available at that point
             for present in feature_graph
                 .query_forward([entry_point.default_feature_id()])?
-                .resolve_with(Walker(kind, Place::Both))
+                .resolve_with(Walker(Place::Both))
                 .features_for(dep)?
                 .iter()
                 .flat_map(|x| x.features())
@@ -195,7 +196,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     // and the last iteration is going across the workspace removing features unified by children
     for member in package_graph
         .query_workspace()
-        .resolve_with(Walker(kind, Place::Both))
+        .resolve_with(Walker(Place::Both))
         .packages(DependencyDirection::Reverse)
     {
         if !member.in_workspace() {
@@ -258,7 +259,7 @@ pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Res
 
     for package in package_graph
         .query_workspace()
-        .resolve_with(Walker(kind, Place::Workspace))
+        .resolve_with(Walker(Place::Workspace))
         .packages(DependencyDirection::Reverse)
     {
         if !package.in_workspace() {
@@ -279,7 +280,7 @@ pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
     let mut changes = false;
     for package in package_graph
         .query_workspace()
-        .resolve_with(Walker(kind, Place::Workspace))
+        .resolve_with(Walker(Place::Workspace))
         .packages(DependencyDirection::Forward)
     {
         let hacked = package.metadata_table()["hackerman"]["stash"]

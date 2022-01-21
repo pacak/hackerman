@@ -11,7 +11,7 @@ pub fn workspace(package_graph: &PackageGraph, kind: DependencyKind) -> anyhow::
         .map(|p| p.default_feature_id())
         .collect::<Vec<_>>();
     let fg = package_graph.feature_graph();
-    let walker = Walker(kind, Place::Workspace);
+    let walker = Walker(Place::Workspace);
     feature_ids(
         &fg,
         fids,
@@ -32,7 +32,7 @@ pub fn package(
     let packages = packages_by_name_and_version(package_graph, name, version)?;
     let pids = packages.iter().map(|p| p.id()).collect::<BTreeSet<_>>();
     let fg = package_graph.feature_graph();
-    let walker = Walker(kind, Place::Both);
+    let walker = Walker(Place::Both);
 
     let fids = fg
         .query_workspace(StandardFeatures::Default)
