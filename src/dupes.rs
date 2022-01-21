@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use guppy::{graph::PackageGraph, DependencyKind};
+use guppy::graph::PackageGraph;
+use guppy::DependencyKind;
 
-use crate::NonMacroKind;
+use crate::query::Walker;
 
 pub fn list(package_graph: &PackageGraph, kind: DependencyKind) -> anyhow::Result<()> {
     let mut items = BTreeMap::new();
 
     for p in package_graph
         .query_workspace()
-        .resolve_with(NonMacroKind(kind))
+        .resolve_with(Walker(crate::query::Place::Both))
         .packages(guppy::graph::DependencyDirection::Forward)
     {
         items

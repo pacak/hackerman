@@ -13,35 +13,6 @@ pub mod query;
 pub mod toml;
 pub mod tree;
 
-struct NonMacroKind(DependencyKind);
-impl guppy::graph::feature::FeatureResolver<'_> for NonMacroKind {
-    fn accept(
-        &mut self,
-        query: &guppy::graph::feature::FeatureQuery,
-        link: guppy::graph::feature::CrossLink,
-    ) -> bool {
-        link.status_for_kind(self.0).is_present()
-            && match query.direction() {
-                DependencyDirection::Forward => !link.from().package().is_proc_macro(),
-                DependencyDirection::Reverse => !link.to().package().is_proc_macro(),
-            }
-    }
-}
-
-impl PackageResolver<'_> for NonMacroKind {
-    fn accept(
-        &mut self,
-        query: &guppy::graph::PackageQuery,
-        link: guppy::graph::PackageLink,
-    ) -> bool {
-        link.req_for_kind(self.0).is_present()
-            && match query.direction() {
-                DependencyDirection::Forward => !link.from().is_proc_macro(),
-                DependencyDirection::Reverse => !link.to().is_proc_macro(),
-            }
-    }
-}
-
 fn resolve_package<'a>(
     g: &'a PackageGraph,
     name: &'a str,
