@@ -12,8 +12,7 @@ fn guppy_graph(path: &OsStr) -> anyhow::Result<guppy::graph::PackageGraph> {
     use guppy::{graph::PackageGraph, MetadataCommand};
     let mut cmd = MetadataCommand::new();
     Ok(PackageGraph::from_command(
-        cmd.manifest_path(path)
-            .other_options(["--filter-platform", "x86_64-unknown-linux-gnu"]),
+        cmd.manifest_path(path), // .other_options(["--filter-platform", "x86_64-unknown-linux-gnu"]),
     )?)
 }
 
@@ -46,6 +45,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Hack(Hack { dry, lock }) => {
+            //hack::hack33(&manifest)?;
             let g = guppy_graph(&manifest)?;
             hack::apply(&g, dry, lock)?;
         }

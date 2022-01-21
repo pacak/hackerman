@@ -2,8 +2,11 @@ use guppy::graph::feature::FeatureId;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
-use petgraph::visit::EdgeRef;
-use petgraph::Graph;
+use petgraph::adj::NodeIndex;
+use petgraph::algo::toposort;
+use petgraph::algo::tred::{dag_to_toposorted_adjacency_list, dag_transitive_reduction_closure};
+use petgraph::visit::{EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, Visitable};
+use petgraph::{EdgeDirection, Graph};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -324,15 +327,15 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
 
     let here = Platform::current()?;
 
-    use petgraph::Graph;
-
-    let mut g = Graph::new();
+    let mut graph = Graph::new();
+    let mut workspace_features = BTreeSet::new();
 
     let mut nodes = BTreeMap::new();
     for pkt in package_graph.workspace().iter() {
+        workspace_features.insert(pkt.default_feature_id());
         nodes.insert(
             pkt.default_feature_id(),
-            g.add_node(pkt.default_feature_id()),
+            graph.add_node(pkt.default_feature_id()),
         );
     }
 
@@ -354,48 +357,45 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
                 }
             }
 
-            // ignored
             let cond = match to_follow {
                 Some(cond) => cond,
                 None => return false,
             };
 
-            if link.to().feature_id() == link.to().package().default_feature_id() {
-                let mut first_visit = false;
-                let default_ix = *nodes.entry(link.to().feature_id()).or_insert_with(|| {
-                    first_visit = true;
-                    g.add_node(link.to().feature_id())
-                });
+            let mut first_visit = false;
+            let default_ix = *nodes.entry(link.to().feature_id()).or_insert_with(|| {
+                first_visit = true;
+                graph.add_node(link.to().feature_id())
+            });
 
-                // track dependencies within workspace
-
-                if first_visit {
-                    for f in feature_graph
-                        .query_forward([link.to().feature_id()])
-                        .unwrap()
-                        .resolve_with_fn(|_query, _link| false)
-                        .feature_ids(DependencyDirection::Forward)
-                    {
-                        if f != link.to().feature_id() {
-                            let to = *nodes.entry(f).or_insert_with(|| g.add_node(f));
-                            g.add_edge(default_ix, to, Pla::Always);
-                        }
+            // on the first visit to a new feature node we also store intra package feature
+            // dependencies
+            if first_visit {
+                for f in feature_graph
+                    .query_forward([link.to().feature_id()])
+                    .unwrap()
+                    .resolve_with_fn(|_query, _link| false)
+                    .feature_ids(DependencyDirection::Forward)
+                {
+                    if f != link.to().feature_id() {
+                        let to = *nodes.entry(f).or_insert_with(|| graph.add_node(f));
+                        graph.add_edge(default_ix, to, Pla::Always);
                     }
-                };
-            }
+                }
+            };
 
             let from = *nodes
                 .entry(link.from().feature_id())
-                .or_insert_with(|| g.add_node(link.from().feature_id()));
+                .or_insert_with(|| graph.add_node(link.from().feature_id()));
             let to = *nodes
                 .entry(link.to().feature_id())
-                .or_insert_with(|| g.add_node(link.to().feature_id()));
+                .or_insert_with(|| graph.add_node(link.to().feature_id()));
 
             if !link.to().feature_id().is_base() {
                 let base = FeatureId::base(link.to().package_id());
                 nodes.entry(base).or_insert_with(|| {
-                    let base_node = g.add_node(base);
-                    g.add_edge(base_node, from, Pla::Always);
+                    let base_node = graph.add_node(base);
+                    graph.add_edge(base_node, from, Pla::Always);
                     base_node
                 });
             }
@@ -408,23 +408,102 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
                 link.from().feature_id(),
                 link.to().feature_id()
             );
-            g.add_edge(from, to, cond);
+            graph.add_edge(from, to, cond);
 
             true
         });
+    /*
+    // "base" packages don't matter form feature resolution point if view. If they are
+    // imported - all the dependencies are. If they are not imported - none are.
+    graph.retain_nodes(|a, n| {
+        let fid = a[n];
+        !fid.is_base() || workspace_features.contains(&fid)
+    });*/
 
-    dot::render(&FG(&g), &mut std::io::stdout())?;
+    /*
+    graph.retain_edges(|a, n| {
+        if let Some((from, _)) = a.edge_endpoints(n) {
+            a[from].feature() != Some("default")
+        } else {
+            false
+        }
+    });*/
+    /*
+        // Removing redundant edges with using transitive reduction
+        let toposort = toposort(&graph, None).expect("cycling dependencies are not supported");
+        let (adj_list, revmap) = dag_to_toposorted_adjacency_list::<_, NodeIndex>(&graph, &toposort);
+        let (reduction, _closure) = dag_transitive_reduction_closure(&adj_list);
+        let before = graph.edge_count();
+        graph.retain_edges(|x, y| {
+            if let Some((f, t)) = x.edge_endpoints(y) {
+                reduction.contains_edge(revmap[f.index()], revmap[t.index()])
+            } else {
+                false
+            }
+        });
+        let after = graph.edge_count();
+        println!("Transitive reduction {} -> {}", before, after);
+    */
+    transitive_reduction(&mut graph);
+
+    /*
+        loop {
+            let mut change = false;
+
+            // removing base nodes sitting at the edge - they are not going to affect the results
+            let to_drop = graph
+                .externals(EdgeDirection::Outgoing)
+                .filter(|i| {
+                    let fid = graph[*i];
+                    fid.is_base() && !workspace_features.contains(&fid)
+                })
+                .collect::<Vec<_>>();
+            println!("trimming base {}", to_drop.len());
+            change |= !to_drop.is_empty();
+
+            for e in to_drop.into_iter() {
+                graph.remove_node(e);
+            }
+
+            let x = graph
+                .externals(EdgeDirection::Outgoing)
+                .filter(|i| {
+                    let fid = graph[*i];
+                    if workspace_features.contains(&fid) {
+                        return false;
+                    }
+                    graph
+                        .neighbors_directed(*i, EdgeDirection::Incoming)
+                        .count()
+                        == 1
+                })
+                .collect::<Vec<_>>();
+
+            println!("trimming single ends {}", x.len());
+            for e in x {
+                change = true;
+                graph.remove_node(e);
+            }
+            if !change {
+                break;
+            }
+        }
+    */
+    //    transitive_reduction(&mut graph);
 
     #[cfg(feature = "spawn_xdot")]
     {
         use tempfile::NamedTempFile;
         let mut file = NamedTempFile::new()?;
-        //        dot::render(&graph, &mut file)?;
-        dot::render(&FG(&g), &mut file)?;
+        dot::render(&FG(&graph), &mut file)?;
         std::process::Command::new("xdot")
             .args([file.path()])
             .output()?;
     }
+
+    /*
+
+    let mut gg = graph.clone();
 
     let mut m: FeatureMap = BTreeMap::new();
 
@@ -434,19 +513,18 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
         frontline_edges.clear();
         frontline_nodes.clear();
 
-        for external in g.externals(petgraph::Direction::Outgoing) {
-            let feature = g[external];
+        for external in gg.externals(petgraph::Direction::Outgoing) {
+            let feature = gg[external];
 
             let feature_deps = m.remove(&feature).unwrap_or_default();
-            use petgraph::visit::EdgeRef;
 
             frontline_nodes.push(external);
             //            println!("{feature}");
-            for edge in g.edges_directed(external, petgraph::Direction::Incoming) {
+            for edge in gg.edges_directed(external, petgraph::Direction::Incoming) {
                 frontline_edges.push(edge.id());
 
                 let usage = edge.weight();
-                let user = g[edge.source()];
+                let user = gg[edge.source()];
 
                 // TODO: THIS should be transformed with usage!
                 let mut victim = feature_deps.clone();
@@ -478,16 +556,16 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
             break;
         } else {
             for e in frontline_edges.iter() {
-                g.remove_edge(*e);
+                gg.remove_edge(*e);
             }
             for n in frontline_nodes.iter() {
-                g.remove_node(*n);
+                gg.remove_node(*n);
             }
         }
 
         println!();
         println!();
-    }
+    }*/
 
     Ok(())
 }
@@ -571,4 +649,21 @@ pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
 pub fn restore_file(path: &OsStr) -> anyhow::Result<()> {
     crate::toml::restore_dependencies(path)?;
     Ok(())
+}
+
+fn transitive_reduction(graph: &mut Graph<FeatureId, Pla>) {
+    let before = graph.edge_count();
+    let toposort = toposort(&*graph, None).expect("cycling dependencies are not supported");
+    let (adj_list, revmap) = dag_to_toposorted_adjacency_list::<_, NodeIndex>(&*graph, &toposort);
+    let (reduction, _closure) = dag_transitive_reduction_closure(&adj_list);
+
+    graph.retain_edges(|x, y| {
+        if let Some((f, t)) = x.edge_endpoints(y) {
+            reduction.contains_edge(revmap[f.index()], revmap[t.index()])
+        } else {
+            false
+        }
+    });
+    let after = graph.edge_count();
+    debug!("Transitive reduction, edges {before} -> {after}");
 }
