@@ -1,6 +1,7 @@
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::{DependencyKind, PackageId};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use tracing::{debug, info, trace, trace_span, warn};
 
 use crate::{query::*, toml};
@@ -297,5 +298,10 @@ pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
         warn!("Nothing to do!");
     }
 
+    Ok(())
+}
+
+pub fn restore_file(path: &OsStr) -> anyhow::Result<()> {
+    crate::toml::restore_dependencies(path)?;
     Ok(())
 }

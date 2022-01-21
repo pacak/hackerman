@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 
 use cargo_hackerman::{
-    dupes, explain, hack,
+    dupes, explain, hack, mergetool,
     opts::{Command, Hack},
     show_package, tree,
 };
@@ -33,6 +33,9 @@ fn main() -> anyhow::Result<()> {
 
     let kind = DependencyKind::Normal;
     match cmd {
+        Command::Mergedriver(base, local, remote, merged) => {
+            mergetool::merge(&base, &local, &remote, &merged)?;
+        }
         Command::Explain(e) => {
             let kind = DependencyKind::Normal;
 
@@ -46,9 +49,12 @@ fn main() -> anyhow::Result<()> {
             let g = guppy_graph(&manifest)?;
             hack::apply(&g, dry, lock)?;
         }
-        Command::Restore => {
+        Command::Restore(None) => {
             let g = guppy_graph(&manifest)?;
             hack::restore(g)?;
+        }
+        Command::Restore(Some(file)) => {
+            hack::restore_file(&file)?;
         }
         Command::Verify => {
             let g = guppy_graph(&manifest)?;

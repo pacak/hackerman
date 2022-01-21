@@ -114,15 +114,29 @@ where
 
     let kind = "dependencies";
 
+    let mut has_lock = false;
     if let Some(t) = toml["package"]["metadata"]["hackerman"].as_table_mut() {
         t.remove("lock");
+        has_lock = true;
     }
 
-    let table = to_table(&mut toml, &["package", "metadata", "hackerman", "stash"])?;
-    let stash_table = if let Some(Item::Table(stash_table)) = table.remove(kind) {
-        stash_table
-    } else {
-        anyhow::bail!("Corrupted stash table in {:?}", manifest_path);
+    let stash_table = match toml["package"]["metadata"]["hackerman"]["stash"].as_table_mut() {
+        Some(table) => match table.remove(kind) {
+            Some(Item::Table(table)) => Some(table),
+            Some(_) => anyhow::bail!("corrupted stash table in {:?}", manifest_path),
+            None => None,
+        },
+        None => None,
+    };
+
+    let stash_table = match stash_table {
+        Some(t) => t,
+        None => {
+            if has_lock {
+                std::fs::write(&manifest_path, toml.to_string())?;
+            }
+            return Ok(());
+        }
     };
 
     let table = to_table(&mut toml, &[kind])?;

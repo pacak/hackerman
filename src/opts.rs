@@ -7,12 +7,13 @@ use tracing::Level;
 pub enum Command {
     Explain(Explain),
     Hack(Hack),
-    Restore,
+    Restore(Option<OsString>),
     Duplicates,
     Verify,
     WorkspaceTree,
     PackageTree(String, Option<String>, Option<String>),
     ShowPackage(String, Option<String>, Option<Focus>),
+    Mergedriver(OsString, OsString, OsString, OsString),
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +48,20 @@ fn explain() -> Parser<Explain> {
         feature,
         version,
     })
+}
+
+fn merge_driver_cmd() -> Parser<Command> {
+    let msg = "Restore files and merge with the default merge driver";
+    use Command::Mergedriver;
+
+    let base = positional_os("BASE");
+    let local = positional_os("LOCAL");
+    let remote = positional_os("REMOTE");
+    let result = positional_os("RESULT");
+    let info = Info::default()
+        .descr(msg)
+        .for_parser(apply!(Mergedriver(base, local, remote, result)));
+    command("merge", Some(msg), info)
 }
 
 fn explain_cmd() -> Parser<Command> {
@@ -106,9 +121,11 @@ fn hack_cmd() -> Parser<Command> {
 }
 
 fn restore_cmd() -> Parser<Command> {
+    let file = positional_os("FILE").optional();
+
     let info = Info::default()
         .descr("Remove crate dependency unification added by the 'hack' command")
-        .for_parser(Parser::pure(Command::Restore));
+        .for_parser(file.map(Command::Restore));
     command("restore", Some("Remove unification"), info)
 }
 
@@ -195,6 +212,7 @@ fn options_inner() -> OptionParser<(Level, OsString, Command)> {
         .or_else(duplicates_cmd())
         .or_else(verify_cmd())
         .or_else(tree_cmd())
+        .or_else(merge_driver_cmd())
         .or_else(show_cmd());
     let custom_manifest = custom_manifest();
     let opts = tuple!(v, custom_manifest, cmd);

@@ -8,6 +8,7 @@ pub mod dump;
 pub mod dupes;
 pub mod explain;
 pub mod hack;
+pub mod mergetool;
 pub mod opts;
 pub mod query;
 pub mod toml;
