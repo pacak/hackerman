@@ -1,17 +1,23 @@
-use guppy::graph::feature::FeatureId;
+use guppy::graph::feature::{FeatureGraph, FeatureId};
+use guppy::graph::PackageMetadata;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
 use petgraph::adj::NodeIndex;
 use petgraph::algo::toposort;
 use petgraph::algo::tred::{dag_to_toposorted_adjacency_list, dag_transitive_reduction_closure};
-use petgraph::visit::{EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, Visitable};
+use petgraph::graph::Node;
+use petgraph::visit::{
+    Dfs, DfsPostOrder, EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, Reversed, Visitable,
+    Walker,
+};
 use petgraph::{EdgeDirection, Graph};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use tracing::{debug, info, trace, trace_span, warn};
 
+use crate::dump::FeatDepGraph;
 use crate::{query::*, toml};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
@@ -322,83 +328,144 @@ impl<'a> dot::Labeller<'a, FeatureId<'a>, (FeatureId<'a>, FeatureId<'a>)> for FG
 }
 // -----------------------------------------------------------------------------------------------
 
+#[derive(Default, Debug)]
+struct FGraph<'a> {
+    pub graph: Graph<FeatureId<'a>, Pla>,
+    pub nodes: BTreeMap<FeatureId<'a>, petgraph::prelude::NodeIndex>,
+    //    pub crates: BTreeMap<&'a PackageId, BTreeSet<FeatureId<'a>>>,
+    pub workspace: BTreeSet<FeatureId<'a>>,
+}
+
+impl<'a> FGraph<'a> {
+    fn feat_index(&mut self, fid: FeatureId<'a>) -> petgraph::prelude::NodeIndex {
+        *self
+            .nodes
+            .entry(fid)
+            .or_insert_with(|| self.graph.add_node(fid))
+    }
+
+    fn extend_local_feats(
+        &mut self,
+        start_fid: FeatureId<'a>,
+        feature_graph: &FeatureGraph<'a>,
+    ) -> anyhow::Result<()> {
+        let start_ix = self.feat_index(start_fid);
+
+        for feat in feature_graph
+            .query_forward([start_fid])?
+            .resolve_with_fn(|_query, _link| false)
+            .feature_ids(DependencyDirection::Forward)
+        {
+            if feat == start_fid {
+                continue;
+            }
+            let feat_ix = self.feat_index(feat);
+            if !self.graph.contains_edge(start_ix, feat_ix) {
+                debug_assert!(start_ix != feat_ix);
+                self.graph.add_edge(start_ix, feat_ix, Pla::Always);
+                self.extend_local_feats(feat, feature_graph).unwrap();
+            }
+        }
+
+        Ok(())
+    }
+
+    fn add_workspace_member(
+        &mut self,
+        pkg: PackageMetadata<'a>,
+        features: &FeatureGraph<'a>,
+    ) -> anyhow::Result<()> {
+        let pkg_fid = pkg.default_feature_id();
+        self.workspace.insert(pkg_fid);
+        self.extend_local_feats(pkg_fid, features)
+    }
+
+    fn next_dependency(&self, pg: &PackageGraph) -> Option<petgraph::prelude::NodeIndex> {
+        for ws_fid in self.workspace.iter() {
+            let &ws_ix = self.nodes.get(ws_fid)?;
+
+            let mut dfs = Dfs::new(&self.graph, ws_ix);
+            while let Some(child_ix) = dfs.next(&self.graph) {
+                let child_feat = self.graph[child_ix];
+                if !pg.metadata(child_feat.package_id()).unwrap().in_workspace() {
+                    //                if !self.workspace.contains(&child_feat) {
+                    return Some(child_ix);
+                }
+            }
+        }
+        None
+    }
+
+    fn all_dependencies(
+        &'a self,
+        start: FeatureId<'a>,
+    ) -> impl Iterator<Item = (petgraph::prelude::NodeIndex, FeatureId<'a>)> {
+        let ix = *self.nodes.get(&start).unwrap();
+
+        Dfs::new(&self.graph, ix)
+            .iter(&self.graph)
+            .map(|i| (i, self.graph[i]))
+    }
+
+    fn minimize<'b>(
+        &self,
+        mut set: BTreeSet<&'b PackageId>,
+        package_graph: &'a PackageGraph,
+    ) -> BTreeSet<&'b PackageId> {
+        let mut p2i = BTreeMap::new();
+        let mut i2p = BTreeMap::new();
+
+        for pid in set.iter() {
+            let p = package_graph.metadata(pid).unwrap();
+            let i = self.nodes.get(&p.default_feature_id()).unwrap();
+            p2i.insert(p.id(), i);
+            i2p.insert(i, p.id());
+        }
+
+        let graph = Reversed(&self.graph);
+
+        for (pid, &&ix) in p2i.iter() {
+            for p in Dfs::new(&graph, ix).iter(&graph) {
+                if p == ix {
+                    continue;
+                }
+                if let Some(child) = i2p.get(&p) {
+                    trace!("{pid} subsumes {child}");
+                    set.remove(*child);
+                }
+            }
+        }
+        set
+    }
+}
+
 pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::Result<()> {
     let feature_graph = package_graph.feature_graph();
-
     let here = Platform::current()?;
 
-    let mut graph = Graph::new();
-    let mut workspace_features = BTreeSet::new();
+    let mut fg = FGraph::default();
 
-    let mut nodes = BTreeMap::new();
     for pkt in package_graph.workspace().iter() {
-        workspace_features.insert(pkt.default_feature_id());
-        nodes.insert(
-            pkt.default_feature_id(),
-            graph.add_node(pkt.default_feature_id()),
-        );
+        fg.add_workspace_member(pkt, &feature_graph)?;
     }
 
     feature_graph
         .query_workspace(StandardFeatures::Default)
         .resolve_with_fn(|_query, link| {
-            let parent_node = link.from();
-            let child_node = link.to();
-            let mut to_follow = None;
-
             // first we try to figure out if we want to follow this link.
-            // proc-macro links are always ignored
             // dev links outside of the workspace are ignored
             // otherwise links are followed depending on the Platform
-            if !child_node.package().is_proc_macro() {
-                to_follow = follow(&here, link.normal());
-                if to_follow.is_none() && parent_node.package().in_workspace() {
-                    to_follow = follow(&here, link.dev());
-                }
-            }
 
-            let cond = match to_follow {
+            let cond = match follow(&here, link.normal()).or_else(|| follow(&here, link.build())) {
                 Some(cond) => cond,
                 None => return false,
             };
 
-            let mut first_visit = false;
-            let default_ix = *nodes.entry(link.to().feature_id()).or_insert_with(|| {
-                first_visit = true;
-                graph.add_node(link.to().feature_id())
-            });
+            fg.extend_local_feats(link.to().feature_id(), &feature_graph)
+                .unwrap();
 
-            // on the first visit to a new feature node we also store intra package feature
-            // dependencies
-            if first_visit {
-                for f in feature_graph
-                    .query_forward([link.to().feature_id()])
-                    .unwrap()
-                    .resolve_with_fn(|_query, _link| false)
-                    .feature_ids(DependencyDirection::Forward)
-                {
-                    if f != link.to().feature_id() {
-                        let to = *nodes.entry(f).or_insert_with(|| graph.add_node(f));
-                        graph.add_edge(default_ix, to, Pla::Always);
-                    }
-                }
-            };
-
-            let from = *nodes
-                .entry(link.from().feature_id())
-                .or_insert_with(|| graph.add_node(link.from().feature_id()));
-            let to = *nodes
-                .entry(link.to().feature_id())
-                .or_insert_with(|| graph.add_node(link.to().feature_id()));
-
-            if !link.to().feature_id().is_base() {
-                let base = FeatureId::base(link.to().package_id());
-                nodes.entry(base).or_insert_with(|| {
-                    let base_node = graph.add_node(base);
-                    graph.add_edge(base_node, from, Pla::Always);
-                    base_node
-                });
-            }
+            let from = fg.feat_index(link.from().feature_id());
+            let to = fg.feat_index(link.to().feature_id());
 
             //assert!(!g.contains_edge(from, to));
             trace!(
@@ -408,164 +475,125 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
                 link.from().feature_id(),
                 link.to().feature_id()
             );
-            graph.add_edge(from, to, cond);
+            fg.graph.add_edge(from, to, cond);
 
             true
         });
-    /*
-    // "base" packages don't matter form feature resolution point if view. If they are
-    // imported - all the dependencies are. If they are not imported - none are.
-    graph.retain_nodes(|a, n| {
-        let fid = a[n];
-        !fid.is_base() || workspace_features.contains(&fid)
-    });*/
 
-    /*
-    graph.retain_edges(|a, n| {
-        if let Some((from, _)) = a.edge_endpoints(n) {
-            a[from].feature() != Some("default")
-        } else {
-            false
-        }
-    });*/
-    /*
-        // Removing redundant edges with using transitive reduction
-        let toposort = toposort(&graph, None).expect("cycling dependencies are not supported");
-        let (adj_list, revmap) = dag_to_toposorted_adjacency_list::<_, NodeIndex>(&graph, &toposort);
-        let (reduction, _closure) = dag_transitive_reduction_closure(&adj_list);
-        let before = graph.edge_count();
-        graph.retain_edges(|x, y| {
-            if let Some((f, t)) = x.edge_endpoints(y) {
-                reduction.contains_edge(revmap[f.index()], revmap[t.index()])
-            } else {
-                false
-            }
-        });
-        let after = graph.edge_count();
-        println!("Transitive reduction {} -> {}", before, after);
-    */
-    transitive_reduction(&mut graph);
+    transitive_reduction(&mut fg.graph);
 
-    /*
-        loop {
-            let mut change = false;
+    let stashed_graph = fg.graph.clone();
 
-            // removing base nodes sitting at the edge - they are not going to affect the results
-            let to_drop = graph
-                .externals(EdgeDirection::Outgoing)
-                .filter(|i| {
-                    let fid = graph[*i];
-                    fid.is_base() && !workspace_features.contains(&fid)
-                })
-                .collect::<Vec<_>>();
-            println!("trimming base {}", to_drop.len());
-            change |= !to_drop.is_empty();
+    let mut splice_srcs = Vec::new();
+    let mut splice_dsts = Vec::new();
+    let mut to_add = BTreeMap::new();
 
-            for e in to_drop.into_iter() {
-                graph.remove_node(e);
-            }
+    let mut member_package_dependencies = BTreeMap::new();
 
-            let x = graph
-                .externals(EdgeDirection::Outgoing)
-                .filter(|i| {
-                    let fid = graph[*i];
-                    if workspace_features.contains(&fid) {
-                        return false;
-                    }
-                    graph
-                        .neighbors_directed(*i, EdgeDirection::Incoming)
-                        .count()
-                        == 1
-                })
-                .collect::<Vec<_>>();
-
-            println!("trimming single ends {}", x.len());
-            for e in x {
-                change = true;
-                graph.remove_node(e);
-            }
-            if !change {
-                break;
-            }
-        }
-    */
-    //    transitive_reduction(&mut graph);
-
-    #[cfg(feature = "spawn_xdot")]
-    {
-        use tempfile::NamedTempFile;
-        let mut file = NamedTempFile::new()?;
-        dot::render(&FG(&graph), &mut file)?;
-        std::process::Command::new("xdot")
-            .args([file.path()])
-            .output()?;
+    for member in package_graph.workspace().iter() {
+        let member_deps = fg
+            .all_dependencies(member.default_feature_id())
+            .map(|(_, feat)| feat.package_id().clone())
+            .collect::<BTreeSet<_>>();
+        member_package_dependencies.insert(member.id().clone(), member_deps);
     }
 
-    /*
+    while let Some(feat_ix) = fg.next_dependency(&package_graph) {
+        splice_srcs.clear();
+        splice_dsts.clear();
+        //        dump(&fg)?;
+        let feat_id = fg.graph[feat_ix];
+        let feat_pkg = feat_id.package_id();
 
-    let mut gg = graph.clone();
+        let feat = package_graph.metadata(feat_pkg)?;
+        assert!(!feat.in_workspace(), "{feat:?}");
 
-    let mut m: FeatureMap = BTreeMap::new();
+        debug!("checking for {feat_id}");
 
-    let mut frontline_edges = Vec::new();
-    let mut frontline_nodes = Vec::new();
-    loop {
-        frontline_edges.clear();
-        frontline_nodes.clear();
+        for member in package_graph.workspace().iter() {
+            let member_name = member.name();
 
-        for external in gg.externals(petgraph::Direction::Outgoing) {
-            let feature = gg[external];
-
-            let feature_deps = m.remove(&feature).unwrap_or_default();
-
-            frontline_nodes.push(external);
-            //            println!("{feature}");
-            for edge in gg.edges_directed(external, petgraph::Direction::Incoming) {
-                frontline_edges.push(edge.id());
-
-                let usage = edge.weight();
-                let user = gg[edge.source()];
-
-                // TODO: THIS should be transformed with usage!
-                let mut victim = feature_deps.clone();
-                let set = m.entry(user).or_insert_with(BTreeSet::new);
-                set.append(&mut victim);
-                set.insert((feature, usage.clone()));
-
-                //                println!("\t{} : {:?}", user, usage);
-                //                println!("{:?}, should be {:?}", m[&user], feature_deps);
+            if !member_package_dependencies
+                .get(member.id())
+                .unwrap()
+                .contains(feat_pkg)
+            {
+                trace!("{member_name} doesn't use {feat_pkg}, ignoring");
+                continue;
             }
 
-            //            progress = true;
-        }
+            let member_feats = fg
+                .all_dependencies(member.default_feature_id())
+                .filter_map(|(_, feat)| (feat.package_id() == feat_pkg).then(|| feat))
+                .collect::<BTreeSet<_>>();
 
-        println!();
-        for (k, vs) in m.iter() {
-            println!("{k}");
-            for v in vs.iter() {
-                println!("\t{v:?}");
+            if member_feats.contains(&feat_id) {
+                trace!("{member_name} uses {feat_id}, ignoring");
+                continue;
             }
+
+            info!("{member_name} uses {feat_pkg} but not {feat_id}");
+            to_add
+                .entry(feat_id)
+                .or_insert_with(BTreeSet::new)
+                .insert(member.id());
+            //            to_add.push((member.id(), feat_id));
+            let member_id = *fg.nodes.get(&member.default_feature_id()).unwrap();
+            fg.graph.add_edge(member_id, feat_ix, Pla::Always);
         }
 
-        println!(
-            "{} edges / {} nodes to remove",
-            frontline_edges.len(),
-            frontline_nodes.len()
+        splice_dsts.extend(
+            fg.graph
+                .neighbors_directed(feat_ix, EdgeDirection::Outgoing),
         );
-        if frontline_edges.is_empty() {
-            break;
-        } else {
-            for e in frontline_edges.iter() {
-                gg.remove_edge(*e);
-            }
-            for n in frontline_nodes.iter() {
-                gg.remove_node(*n);
+        if splice_dsts.is_empty() {
+            fg.graph.remove_node(feat_ix);
+            continue;
+        }
+        splice_srcs.extend(
+            fg.graph
+                .neighbors_directed(feat_ix, EdgeDirection::Incoming),
+        );
+
+        for &src in splice_srcs.iter() {
+            for &dst in splice_dsts.iter() {
+                if !fg.graph.contains_edge(src, dst) {
+                    fg.graph.add_edge(src, dst, Pla::Always);
+                }
             }
         }
+        fg.graph.remove_node(feat_ix);
+        fg.graph.shrink_to_fit();
+    }
 
-        println!();
-        println!();
-    }*/
+    // type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
+    let mut changeset: Changeset = BTreeMap::new();
+
+    for (feat, workspace_crates) in to_add.into_iter() {
+        let workspace_crates = fg.minimize(workspace_crates, package_graph);
+        for ws_crate in workspace_crates {
+            let ws_crate_deps = changeset.entry(ws_crate).or_insert_with(BTreeMap::new);
+
+            if let Some(feat_name) = feat.feature() {
+                let dependency_feats = ws_crate_deps
+                    .entry(feat.package_id())
+                    .or_insert_with(BTreeSet::new);
+
+                dependency_feats.insert(feat_name);
+            } else {
+                unreachable!("this doesn't make sense")
+            }
+        }
+    }
+
+    for (pkt, changes) in changeset.iter() {
+        println!("{pkt}");
+        for (a, b) in changes.iter() {
+            println!("\t{a} {b:?}");
+        }
+    }
+
+    //    dump(&fg)?;
 
     Ok(())
 }
@@ -651,7 +679,7 @@ pub fn restore_file(path: &OsStr) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn transitive_reduction(graph: &mut Graph<FeatureId, Pla>) {
+fn transitive_reduction<N, E>(graph: &mut Graph<N, E>) {
     let before = graph.edge_count();
     let toposort = toposort(&*graph, None).expect("cycling dependencies are not supported");
     let (adj_list, revmap) = dag_to_toposorted_adjacency_list::<_, NodeIndex>(&*graph, &toposort);
@@ -666,4 +694,14 @@ fn transitive_reduction(graph: &mut Graph<FeatureId, Pla>) {
     });
     let after = graph.edge_count();
     debug!("Transitive reduction, edges {before} -> {after}");
+}
+
+fn dump(fg: &FGraph) -> anyhow::Result<()> {
+    use tempfile::NamedTempFile;
+    let mut file = NamedTempFile::new()?;
+    dot::render(&FG(&fg.graph), &mut file)?;
+    std::process::Command::new("xdot")
+        .args([file.path()])
+        .output()?;
+    Ok(())
 }
