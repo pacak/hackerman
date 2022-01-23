@@ -439,7 +439,7 @@ impl<'a> FGraph<'a> {
     }
 }
 
-pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::Result<()> {
+pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     let feature_graph = package_graph.feature_graph();
     let here = Platform::current()?;
 
@@ -449,12 +449,16 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
         fg.add_workspace_member(pkt, &feature_graph)?;
     }
 
+    let mut workspace_feats = BTreeMap::new();
+
     feature_graph
         .query_workspace(StandardFeatures::Default)
         .resolve_with_fn(|_query, link| {
             // first we try to figure out if we want to follow this link.
             // dev links outside of the workspace are ignored
             // otherwise links are followed depending on the Platform
+
+            let in_workspace = link.from().package().in_workspace();
 
             let cond = match follow(&here, link.normal()).or_else(|| follow(&here, link.build())) {
                 Some(cond) => cond,
@@ -464,30 +468,39 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
             fg.extend_local_feats(link.to().feature_id(), &feature_graph)
                 .unwrap();
 
+            if in_workspace {
+                if let Some(feat) = link.to().feature_id().feature() {
+                    workspace_feats
+                        .entry(link.from().package_id())
+                        .or_insert_with(BTreeMap::new)
+                        .entry(link.to().package_id())
+                        .or_insert_with(BTreeSet::new)
+                        .insert(feat);
+                }
+            }
+
             let from = fg.feat_index(link.from().feature_id());
             let to = fg.feat_index(link.to().feature_id());
 
-            //assert!(!g.contains_edge(from, to));
+            /*
+
             trace!(
                 "{:3}: -> {:3}: {}-> {} / {cond:?}",
                 from.index(),
                 to.index(),
                 link.from().feature_id(),
                 link.to().feature_id()
-            );
+            );*/
             fg.graph.add_edge(from, to, cond);
 
             true
         });
 
-    transitive_reduction(&mut fg.graph);
+    //    transitive_reduction(&mut fg.graph);
 
-    let stashed_graph = fg.graph.clone();
-
-    let mut splice_srcs = Vec::new();
-    let mut splice_dsts = Vec::new();
     let mut to_add = BTreeMap::new();
 
+    /*
     let mut member_package_dependencies = BTreeMap::new();
 
     for member in package_graph.workspace().iter() {
@@ -496,77 +509,73 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
             .map(|(_, feat)| feat.package_id().clone())
             .collect::<BTreeSet<_>>();
         member_package_dependencies.insert(member.id().clone(), member_deps);
-    }
+    }*/
 
-    while let Some(feat_ix) = fg.next_dependency(&package_graph) {
-        splice_srcs.clear();
-        splice_dsts.clear();
-        //        dump(&fg)?;
-        let feat_id = fg.graph[feat_ix];
-        let feat_pkg = feat_id.package_id();
+    loop {
+        let mut change = false;
+        let indices = fg.nodes.values().copied().collect::<Vec<_>>();
+        for &feat_ix in indices.iter() {
+            //    while let Some(feat_ix) = fg.next_dependency(package_graph) {
+            let feat_id = fg.graph[feat_ix];
+            let feat_pkg = feat_id.package_id();
 
-        let feat = package_graph.metadata(feat_pkg)?;
-        assert!(!feat.in_workspace(), "{feat:?}");
-
-        debug!("checking for {feat_id}");
-
-        for member in package_graph.workspace().iter() {
-            let member_name = member.name();
-
-            if !member_package_dependencies
-                .get(member.id())
-                .unwrap()
-                .contains(feat_pkg)
-            {
-                trace!("{member_name} doesn't use {feat_pkg}, ignoring");
+            let feat = package_graph.metadata(feat_pkg)?;
+            if feat.in_workspace() {
                 continue;
             }
+            assert!(!feat.in_workspace(), "{feat:?}");
 
-            let member_feats = fg
-                .all_dependencies(member.default_feature_id())
-                .filter_map(|(_, feat)| (feat.package_id() == feat_pkg).then(|| feat))
-                .collect::<BTreeSet<_>>();
+            debug!("\nchecking for {feat_id}");
 
-            if member_feats.contains(&feat_id) {
-                trace!("{member_name} uses {feat_id}, ignoring");
-                continue;
-            }
+            for member in package_graph.workspace().iter() {
+                let member_name = member.name();
 
-            info!("{member_name} uses {feat_pkg} but not {feat_id}");
-            to_add
-                .entry(feat_id)
-                .or_insert_with(BTreeSet::new)
-                .insert(member.id());
-            //            to_add.push((member.id(), feat_id));
-            let member_id = *fg.nodes.get(&member.default_feature_id()).unwrap();
-            fg.graph.add_edge(member_id, feat_ix, Pla::Always);
-        }
+                /*
+                if !member_package_dependencies
+                    .get(member.id())
+                    .unwrap()
+                    .contains(feat_pkg)
+                {
+                    trace!("{member_name} doesn't use pkg with {feat_id}, ignoring");
+                    continue;
+                }*/
 
-        splice_dsts.extend(
-            fg.graph
-                .neighbors_directed(feat_ix, EdgeDirection::Outgoing),
-        );
-        if splice_dsts.is_empty() {
-            fg.graph.remove_node(feat_ix);
-            continue;
-        }
-        splice_srcs.extend(
-            fg.graph
-                .neighbors_directed(feat_ix, EdgeDirection::Incoming),
-        );
-
-        for &src in splice_srcs.iter() {
-            for &dst in splice_dsts.iter() {
-                if !fg.graph.contains_edge(src, dst) {
-                    fg.graph.add_edge(src, dst, Pla::Always);
+                if fg
+                    .all_dependencies(member.default_feature_id())
+                    .any(|(_, feat)| feat == feat_id)
+                {
+                    trace!("{member_name} uses {feat_id}, ignoring");
+                    continue;
                 }
+
+                if !fg
+                    .all_dependencies(member.default_feature_id())
+                    .any(|(_, feat)| feat.package_id() == feat_pkg)
+                {
+                    trace!("{member_name} doesn't use {feat_pkg}, ignoring");
+                    continue;
+                }
+
+                info!("{member_name} uses {feat_pkg} but not {feat_id}");
+                to_add
+                    .entry(feat_id)
+                    .or_insert_with(BTreeSet::new)
+                    .insert(member.id());
+
+                let member_id = *fg.nodes.get(&member.default_feature_id()).unwrap();
+                info!("Added edge {member_id:?} -> {feat_ix:?}");
+                fg.graph.add_edge(member_id, feat_ix, Pla::Always);
+                change = true;
             }
+
+            //        debug!("Removing node by splice {feat_id}/{feat_ix:?}");
+            //        fg.graph.remove_node(feat_ix);
         }
-        fg.graph.remove_node(feat_ix);
-        fg.graph.shrink_to_fit();
+        if !change {
+            break;
+        }
     }
 
-    // type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
     let mut changeset: Changeset = BTreeMap::new();
 
     for (feat, workspace_crates) in to_add.into_iter() {
@@ -586,21 +595,27 @@ pub fn apply(package_graph: &PackageGraph, _dry: bool, _lock: bool) -> anyhow::R
         }
     }
 
-    for (pkt, changes) in changeset.iter() {
+    for (pkt, changes) in changeset.iter_mut() {
         println!("{pkt}");
-        for (a, b) in changes.iter() {
+        for (a, b) in changes.iter_mut() {
             println!("\t{a} {b:?}");
+            if let Some(existing) = workspace_feats.get(pkt) {
+                if let Some(for_feat) = existing.get(a) {
+                    println!("\t\t{for_feat:?}");
+                    b.extend(for_feat);
+                }
+            }
         }
     }
 
-    //    dump(&fg)?;
-
-    Ok(())
+    Ok(changeset)
 }
 
-pub fn apply1(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
+// num-bigint default on textual
+
+pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
     let kind = DependencyKind::Normal;
-    let map = get_changeset(package_graph)?;
+    let map = get_changeset2(package_graph)?;
     if dry {
         if map.is_empty() {
             println!("Features are unified as is")
@@ -696,6 +711,7 @@ fn transitive_reduction<N, E>(graph: &mut Graph<N, E>) {
     debug!("Transitive reduction, edges {before} -> {after}");
 }
 
+/*
 fn dump(fg: &FGraph) -> anyhow::Result<()> {
     use tempfile::NamedTempFile;
     let mut file = NamedTempFile::new()?;
@@ -704,4 +720,4 @@ fn dump(fg: &FGraph) -> anyhow::Result<()> {
         .args([file.path()])
         .output()?;
     Ok(())
-}
+}*/
