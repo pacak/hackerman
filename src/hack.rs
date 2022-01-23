@@ -3,10 +3,10 @@ use guppy::graph::PackageMetadata;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
-use petgraph::adj::NodeIndex;
 use petgraph::algo::toposort;
 use petgraph::algo::tred::{dag_to_toposorted_adjacency_list, dag_transitive_reduction_closure};
 use petgraph::graph::Node;
+use petgraph::prelude::NodeIndex;
 use petgraph::visit::{
     Dfs, DfsPostOrder, EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, Reversed, Visitable,
     Walker,
@@ -328,12 +328,21 @@ impl<'a> dot::Labeller<'a, FeatureId<'a>, (FeatureId<'a>, FeatureId<'a>)> for FG
 }
 // -----------------------------------------------------------------------------------------------
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+enum FeatDep {
+    NotUsed,
+    PackageOnly,
+    FeatUsed,
+}
+
 #[derive(Default, Debug)]
 struct FGraph<'a> {
     pub graph: Graph<FeatureId<'a>, Pla>,
     pub nodes: BTreeMap<FeatureId<'a>, petgraph::prelude::NodeIndex>,
     //    pub crates: BTreeMap<&'a PackageId, BTreeSet<FeatureId<'a>>>,
     pub workspace: BTreeSet<FeatureId<'a>>,
+
+    pub dependency_cache: BTreeMap<(NodeIndex, FeatureId<'a>), FeatDep>,
 }
 
 impl<'a> FGraph<'a> {
@@ -394,6 +403,40 @@ impl<'a> FGraph<'a> {
             }
         }
         None
+    }
+
+    fn depends_on_feature(
+        &mut self,
+        start: petgraph::prelude::NodeIndex,
+        target: FeatureId<'a>,
+    ) -> FeatDep {
+        if let Some(&dep) = self.dependency_cache.get(&(start, target)) {
+            return dep;
+        }
+
+        let mut outcome = if self.graph[start] == target {
+            FeatDep::FeatUsed
+        } else if self.graph[start].package_id() == target.package_id() {
+            FeatDep::PackageOnly
+        } else {
+            FeatDep::NotUsed
+        };
+
+        for child in self
+            .graph
+            .neighbors_directed(start, EdgeDirection::Outgoing)
+            .collect::<Vec<_>>()
+            .into_iter()
+        {
+            if outcome == FeatDep::FeatUsed {
+                break;
+            }
+
+            outcome = outcome.max(self.depends_on_feature(child, target));
+        }
+
+        self.dependency_cache.insert((start, target), outcome);
+        outcome
     }
 
     fn all_dependencies(
@@ -500,20 +543,11 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
     let mut to_add = BTreeMap::new();
 
-    /*
-    let mut member_package_dependencies = BTreeMap::new();
-
-    for member in package_graph.workspace().iter() {
-        let member_deps = fg
-            .all_dependencies(member.default_feature_id())
-            .map(|(_, feat)| feat.package_id().clone())
-            .collect::<BTreeSet<_>>();
-        member_package_dependencies.insert(member.id().clone(), member_deps);
-    }*/
-
+    // traversals here must be performed in topological order, let's leave it for now
+    let indices = fg.nodes.values().copied().collect::<Vec<_>>();
     loop {
+        println!("elements {}", fg.dependency_cache.len());
         let mut change = false;
-        let indices = fg.nodes.values().copied().collect::<Vec<_>>();
         for &feat_ix in indices.iter() {
             //    while let Some(feat_ix) = fg.next_dependency(package_graph) {
             let feat_id = fg.graph[feat_ix];
@@ -529,31 +563,18 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
             for member in package_graph.workspace().iter() {
                 let member_name = member.name();
+                let member_ix = *fg.nodes.get(&member.default_feature_id()).unwrap();
 
-                /*
-                if !member_package_dependencies
-                    .get(member.id())
-                    .unwrap()
-                    .contains(feat_pkg)
-                {
-                    trace!("{member_name} doesn't use pkg with {feat_id}, ignoring");
-                    continue;
-                }*/
+                //fg.dependency_cache.clear();
+                let xxx = fg.depends_on_feature(member_ix, feat_id);
+                //                fg.dependency_cache.clear();
+                //                let xxx2 = fg.depends_on_feature(member_ix, feat_id);
 
-                if fg
-                    .all_dependencies(member.default_feature_id())
-                    .any(|(_, feat)| feat == feat_id)
-                {
-                    trace!("{member_name} uses {feat_id}, ignoring");
-                    continue;
-                }
+                info!("{} {} {:?}", member.id(), feat_id, xxx);
 
-                if !fg
-                    .all_dependencies(member.default_feature_id())
-                    .any(|(_, feat)| feat.package_id() == feat_pkg)
-                {
-                    trace!("{member_name} doesn't use {feat_pkg}, ignoring");
-                    continue;
+                match xxx {
+                    FeatDep::NotUsed | FeatDep::FeatUsed => continue,
+                    FeatDep::PackageOnly => {}
                 }
 
                 info!("{member_name} uses {feat_pkg} but not {feat_id}");
@@ -566,10 +587,9 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
                 info!("Added edge {member_id:?} -> {feat_ix:?}");
                 fg.graph.add_edge(member_id, feat_ix, Pla::Always);
                 change = true;
-            }
 
-            //        debug!("Removing node by splice {feat_id}/{feat_ix:?}");
-            //        fg.graph.remove_node(feat_ix);
+                fg.dependency_cache.clear();
+            }
         }
         if !change {
             break;
