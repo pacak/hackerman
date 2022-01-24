@@ -1,3 +1,4 @@
+use guppy::graph::feature::FeatureId;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::{DependencyKind, PackageId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -217,6 +218,19 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
             }
         }
     }
+
+    // insert implicit "default" feature
+    for member_patch in patches_to_add.values_mut() {
+        for (patched, changes) in member_patch.iter_mut() {
+            if feature_graph
+                .metadata(FeatureId::new(patched, "default"))
+                .is_err()
+            {
+                changes.insert("default");
+            }
+        }
+    }
+
     info!(
         "Need to patch {} Cargo.toml file(s) (after trimming)",
         patches_to_add.len()
