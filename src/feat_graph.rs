@@ -45,11 +45,8 @@ impl<'a> FeatGraph<'a> {
         assert_eq!(res.graph.add_node(FeatKind::Root).index(), 0);
 
         for package in feature_graph.package_graph().workspace().iter() {
-            //            let feat = package.default_feature_id();
-            //            let feat_ix = res.feat_index(feat, FeatKind::Workspace);
             let package_ix =
                 res.extend_local_feats(package.default_feature_id(), FeatKind::Workspace)?;
-
             res.graph.add_edge(root(), package_ix, Dep::Always);
         }
 

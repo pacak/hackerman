@@ -490,12 +490,6 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
     let here = Platform::current()?;
 
-    //    let mut fg = FGraph::default();
-
-    //    for pkt in package_graph.workspace().iter() {
-    //        fg.add_workspace_member(pkt, &feature_graph)?;
-    //    }
-
     let mut workspace_feats: BTreeMap<&PackageId, BTreeSet<&str>> = BTreeMap::new();
 
     feature_graph
@@ -504,15 +498,12 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             // first we try to figure out if we want to follow this link.
             // dev links outside of the workspace are ignored
             // otherwise links are followed depending on the Platform
-
-            let to_workspace = link.to().package().in_workspace();
-
             let _cond = match follow(&here, link.normal()).or_else(|| follow(&here, link.build())) {
                 Some(cond) => cond,
                 None => return false,
             };
 
-            let kind = if to_workspace {
+            let kind = if link.to().package().in_workspace() {
                 FeatKind::Workspace
             } else {
                 FeatKind::External
@@ -524,14 +515,6 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             let from = *fg2.nodes.get(&link.from().feature_id()).unwrap();
             let to = fg2.feat_index(link.to().feature_id(), kind);
             fg2.graph.add_edge(from, to, Dep::Always);
-
-            println!(
-                "{} ({:?}) -> {} ({:?})",
-                link.from().feature_id(),
-                from,
-                link.to().feature_id(),
-                to
-            );
             true
         });
 
@@ -563,9 +546,9 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
         let mut deps_feats = BTreeMap::new();
 
-        let mut to_check = vec![member_ix];
+        let mut next = Some(member_ix);
         let mut dfs = Dfs::new(&fg2.graph, member_ix);
-        'dependency: while let Some(next_item) = to_check.pop() {
+        'dependency: while let Some(next_item) = next.take() {
             dfs.move_to(next_item);
             while let Some(feat_ix) = dfs.next(&fg2.graph) {
                 let feat_id = fg2.features.get(&feat_ix).unwrap();
@@ -589,7 +572,7 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
                             let missing_feat = FeatureId::new(dep, missing_feat);
                             let missing_feat_ix = *fg2.nodes.get(&missing_feat).unwrap();
                             fg2.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
-                            to_check.push(missing_feat_ix);
+                            next = Some(missing_feat_ix);
                             continue 'dependency;
                         }
                     }
@@ -607,15 +590,6 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
         let member_entry = changeset.entry(member_id).or_default();
 
-        println!("Going though {member_id} / {:?}", member_ix);
-
-        println!(
-            "\t{:?}",
-            fg2.graph
-                .neighbors_directed(*member_ix, EdgeDirection::Outgoing)
-                .collect::<Vec<_>>()
-        );
-
         for dep_ix in fg2
             .graph
             .neighbors_directed(*member_ix, EdgeDirection::Outgoing)
@@ -623,19 +597,7 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             if fg2.graph[dep_ix] != FeatKind::External {
                 continue;
             }
-            println!("finalizing {member_id} -> {:?}", fg2.features.get(&dep_ix));
             let dep = fg2.features.get(&dep_ix).unwrap();
-
-            let dep_meta = package_graph.metadata(dep.package_id())?;
-            let _src = match dep_meta.source().parse_external() {
-                Some(ExternalSource::Registry(_)) => (),
-                Some(ExternalSource::Git { .. }) => {
-                    println!("Ignoring {dep} - it comes from git");
-                    continue;
-                }
-                Some(_) => todo!("guppy is doing something fishy"),
-                None => continue,
-            };
 
             if let Some(feat) = dep.feature() {
                 member_entry
@@ -647,6 +609,9 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             if feature_graph
                 .metadata(FeatureId::new(dep.package_id(), "default"))
                 .is_err()
+                || workspace_feats
+                    .get(dep.package_id())
+                    .map_or(false, |s| s.contains("default"))
             {
                 member_entry
                     .entry(dep.package_id())

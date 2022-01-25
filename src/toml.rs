@@ -65,8 +65,11 @@ where
         let dep = g.metadata(package_id)?;
         let name = dep.name();
 
+        todo!("look at {:?}", dep.source().parse_external());
         let mut new_dep = InlineTable::new();
-        new_dep.insert("version", dep.version().to_string().into());
+        let semver = dep.version();
+        let version = format!("{}.{}.{}", semver.major, semver.minor, semver.patch);
+        new_dep.insert("version", version.into());
         let mut feats_arr = Array::new();
         feats_arr.extend(feats.iter().copied().filter(|&f| f != "default"));
         if !feats_arr.is_empty() {
