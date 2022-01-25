@@ -4,11 +4,7 @@ use guppy::graph::{
     feature::{FeatureGraph, FeatureId},
     DependencyDirection,
 };
-use petgraph::{
-    graph::{Node, NodeIndex},
-    visit::NodeIndexable,
-    Graph,
-};
+use petgraph::{graph::NodeIndex, Graph};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FeatKind {
