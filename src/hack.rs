@@ -8,8 +8,8 @@ use petgraph::algo::tred::{dag_to_toposorted_adjacency_list, dag_transitive_redu
 use petgraph::graph::Node;
 use petgraph::prelude::NodeIndex;
 use petgraph::visit::{
-    Dfs, DfsPostOrder, EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, Reversed, Visitable,
-    Walker,
+    Dfs, DfsPostOrder, EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, NodeFiltered, Reversed,
+    Visitable, Walker,
 };
 use petgraph::{EdgeDirection, Graph};
 use std::borrow::Cow;
@@ -18,6 +18,7 @@ use std::ffi::OsStr;
 use tracing::{debug, info, trace, trace_span, warn};
 
 use crate::dump::FeatDepGraph;
+use crate::feat_graph::{Dep, FeatGraph, FeatKind};
 use crate::{query::*, toml};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
@@ -484,15 +485,18 @@ impl<'a> FGraph<'a> {
 
 pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     let feature_graph = package_graph.feature_graph();
+
+    let mut fg2 = FeatGraph::init(feature_graph)?;
+
     let here = Platform::current()?;
 
-    let mut fg = FGraph::default();
+    //    let mut fg = FGraph::default();
 
-    for pkt in package_graph.workspace().iter() {
-        fg.add_workspace_member(pkt, &feature_graph)?;
-    }
+    //    for pkt in package_graph.workspace().iter() {
+    //        fg.add_workspace_member(pkt, &feature_graph)?;
+    //    }
 
-    let mut workspace_feats = BTreeMap::new();
+    let mut workspace_feats: BTreeMap<&PackageId, BTreeSet<&str>> = BTreeMap::new();
 
     feature_graph
         .query_workspace(StandardFeatures::Default)
@@ -501,47 +505,90 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             // dev links outside of the workspace are ignored
             // otherwise links are followed depending on the Platform
 
-            let in_workspace = link.from().package().in_workspace();
+            let to_workspace = link.to().package().in_workspace();
 
-            let cond = match follow(&here, link.normal()).or_else(|| follow(&here, link.build())) {
+            let _cond = match follow(&here, link.normal()).or_else(|| follow(&here, link.build())) {
                 Some(cond) => cond,
                 None => return false,
             };
 
-            fg.extend_local_feats(link.to().feature_id(), &feature_graph)
+            let kind = if to_workspace {
+                FeatKind::Workspace
+            } else {
+                FeatKind::External
+            };
+
+            fg2.extend_local_feats(link.to().feature_id(), kind)
                 .unwrap();
 
-            if in_workspace {
-                if let Some(feat) = link.to().feature_id().feature() {
-                    workspace_feats
-                        .entry(link.from().package_id())
-                        .or_insert_with(BTreeMap::new)
-                        .entry(link.to().package_id())
+            let from = *fg2.nodes.get(&link.from().feature_id()).unwrap();
+            let to = fg2.feat_index(link.to().feature_id(), kind);
+            fg2.graph.add_edge(from, to, Dep::Always);
+
+            true
+        });
+
+    for feature_id in fg2.features.values() {
+        if let Some(feat) = feature_id.feature() {
+            workspace_feats
+                .entry(feature_id.package_id())
+                .or_insert_with(BTreeSet::new)
+                .insert(feat);
+        }
+    }
+
+    transitive_reduction(&mut fg2.graph);
+
+    let workspace_only_graph =
+        NodeFiltered::from_fn(&fg2.graph, |node| fg2.graph[node] != FeatKind::External);
+
+    let members_dfs_postorder = DfsPostOrder::new(&workspace_only_graph, NodeIndex::new(0))
+        .iter(&workspace_only_graph)
+        .collect::<Vec<_>>();
+    for member_ix in members_dfs_postorder {
+        if member_ix == NodeIndex::new(0) {
+            continue;
+        }
+
+        let member = fg2.features.get(&member_ix).unwrap();
+        println!("Checking {member}");
+
+        let mut deps_feats = BTreeMap::new();
+
+        let mut dfs = Dfs::new(&fg2.graph, member_ix);
+        let mut to_check = vec![member_ix];
+        'dependency: while let Some(next_item) = to_check.pop() {
+            dfs.move_to(next_item);
+            while let Some(feat_ix) = dfs.next(&fg2.graph) {
+                let feat_id = fg2.features.get(&feat_ix).unwrap();
+                if let Some(feat) = feat_id.feature() {
+                    let pkg_id = feat_id.package_id();
+                    deps_feats
+                        .entry(pkg_id)
                         .or_insert_with(BTreeSet::new)
                         .insert(feat);
                 }
             }
 
-            let from = fg.feat_index(link.from().feature_id());
-            let to = fg.feat_index(link.to().feature_id());
+            for (dep, feats) in deps_feats.iter() {
+                let ws_feats = workspace_feats.get(dep).unwrap();
+                if ws_feats != feats {
+                    if let Some(missing_feat) = ws_feats.difference(feats).next() {
+                        println!("\t{missing_feat:?} is missing from {dep}",);
+                        let missing_feat = FeatureId::new(dep, missing_feat);
+                        let missing_feat_ix = *fg2.nodes.get(&missing_feat).unwrap();
+                        fg2.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
+                        to_check.push(missing_feat_ix);
+                        continue 'dependency;
+                    }
+                }
+            }
+        }
+    }
 
-            /*
+    Ok(BTreeMap::new())
 
-            trace!(
-                "{:3}: -> {:3}: {}-> {} / {cond:?}",
-                from.index(),
-                to.index(),
-                link.from().feature_id(),
-                link.to().feature_id()
-            );*/
-            fg.graph.add_edge(from, to, cond);
-
-            true
-        });
-
-    //    transitive_reduction(&mut fg.graph);
-
-    let mut to_add = BTreeMap::new();
+    /*
 
     // traversals here must be performed in topological order, let's leave it for now
     let indices = fg.nodes.values().copied().collect::<Vec<_>>();
@@ -599,7 +646,7 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
     let mut changeset: Changeset = BTreeMap::new();
 
     for (feat, workspace_crates) in to_add.into_iter() {
-        let workspace_crates = fg.minimize(workspace_crates, package_graph);
+        let workspace_crates = fg2.minimize(workspace_crates, package_graph);
         for ws_crate in workspace_crates {
             let ws_crate_deps = changeset.entry(ws_crate).or_insert_with(BTreeMap::new);
 
@@ -628,7 +675,7 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
         }
     }
 
-    Ok(changeset)
+    Ok(changeset)*/
 }
 
 // num-bigint default on textual
