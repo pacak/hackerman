@@ -1,6 +1,6 @@
 use guppy::graph::feature::{FeatureGraph, FeatureId};
-use guppy::graph::PackageMetadata;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
+use guppy::graph::{ExternalSource, PackageMetadata};
 use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
 use petgraph::algo::toposort;
@@ -15,7 +15,7 @@ use petgraph::{EdgeDirection, Graph};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use tracing::{debug, info, trace, trace_span, warn};
+use tracing::{debug, info, trace, trace_span, warn, Callsite};
 
 use crate::dump::FeatDepGraph;
 use crate::feat_graph::{Dep, FeatGraph, FeatKind};
@@ -525,6 +525,13 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             let to = fg2.feat_index(link.to().feature_id(), kind);
             fg2.graph.add_edge(from, to, Dep::Always);
 
+            println!(
+                "{} ({:?}) -> {} ({:?})",
+                link.from().feature_id(),
+                from,
+                link.to().feature_id(),
+                to
+            );
             true
         });
 
@@ -538,6 +545,7 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
     }
 
     transitive_reduction(&mut fg2.graph);
+    let mut changed = BTreeSet::new();
 
     let workspace_only_graph =
         NodeFiltered::from_fn(&fg2.graph, |node| fg2.graph[node] != FeatKind::External);
@@ -555,38 +563,100 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
 
         let mut deps_feats = BTreeMap::new();
 
-        let mut dfs = Dfs::new(&fg2.graph, member_ix);
         let mut to_check = vec![member_ix];
+        let mut dfs = Dfs::new(&fg2.graph, member_ix);
         'dependency: while let Some(next_item) = to_check.pop() {
             dfs.move_to(next_item);
             while let Some(feat_ix) = dfs.next(&fg2.graph) {
                 let feat_id = fg2.features.get(&feat_ix).unwrap();
+
+                let pkg_id = feat_id.package_id();
+                let entry = deps_feats.entry(pkg_id).or_insert_with(BTreeSet::new);
+
                 if let Some(feat) = feat_id.feature() {
-                    let pkg_id = feat_id.package_id();
-                    deps_feats
-                        .entry(pkg_id)
-                        .or_insert_with(BTreeSet::new)
-                        .insert(feat);
+                    entry.insert(feat);
                 }
             }
 
             for (dep, feats) in deps_feats.iter() {
-                let ws_feats = workspace_feats.get(dep).unwrap();
-                if ws_feats != feats {
-                    if let Some(missing_feat) = ws_feats.difference(feats).next() {
-                        println!("\t{missing_feat:?} is missing from {dep}",);
-                        let missing_feat = FeatureId::new(dep, missing_feat);
-                        let missing_feat_ix = *fg2.nodes.get(&missing_feat).unwrap();
-                        fg2.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
-                        to_check.push(missing_feat_ix);
-                        continue 'dependency;
+                if let Some(ws_feats) = workspace_feats.get(dep) {
+                    if ws_feats != feats {
+                        if let Some(missing_feat) = ws_feats.difference(feats).next() {
+                            println!("\t{missing_feat:?} is missing from {dep}",);
+
+                            changed.insert(member.package_id());
+
+                            let missing_feat = FeatureId::new(dep, missing_feat);
+                            let missing_feat_ix = *fg2.nodes.get(&missing_feat).unwrap();
+                            fg2.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
+                            to_check.push(missing_feat_ix);
+                            continue 'dependency;
+                        }
                     }
                 }
             }
         }
     }
 
-    Ok(BTreeMap::new())
+    let mut changeset: Changeset = BTreeMap::new();
+
+    for member_id in changed {
+        let member = package_graph.metadata(member_id)?;
+        //        let member_ix = fg2.nodes.get(&member.default_feature_id()).unwrap();
+        let member_ix = fg2.nodes.get(&FeatureId::base(member.id())).unwrap(); // .default_feature_id()).unwrap();
+
+        let member_entry = changeset.entry(member_id).or_default();
+
+        println!("Going though {member_id} / {:?}", member_ix);
+
+        println!(
+            "\t{:?}",
+            fg2.graph
+                .neighbors_directed(*member_ix, EdgeDirection::Outgoing)
+                .collect::<Vec<_>>()
+        );
+
+        for dep_ix in fg2
+            .graph
+            .neighbors_directed(*member_ix, EdgeDirection::Outgoing)
+        {
+            if fg2.graph[dep_ix] != FeatKind::External {
+                continue;
+            }
+            println!("finalizing {member_id} -> {:?}", fg2.features.get(&dep_ix));
+            let dep = fg2.features.get(&dep_ix).unwrap();
+
+            let dep_meta = package_graph.metadata(dep.package_id())?;
+            let _src = match dep_meta.source().parse_external() {
+                Some(ExternalSource::Registry(_)) => (),
+                Some(ExternalSource::Git { .. }) => {
+                    println!("Ignoring {dep} - it comes from git");
+                    continue;
+                }
+                Some(_) => todo!("guppy is doing something fishy"),
+                None => continue,
+            };
+
+            if let Some(feat) = dep.feature() {
+                member_entry
+                    .entry(dep.package_id())
+                    .or_default()
+                    .insert(feat);
+            }
+
+            if feature_graph
+                .metadata(FeatureId::new(dep.package_id(), "default"))
+                .is_err()
+            {
+                member_entry
+                    .entry(dep.package_id())
+                    .or_default()
+                    .insert("default");
+            }
+        }
+    }
+
+    Ok(changeset)
 
     /*
 
