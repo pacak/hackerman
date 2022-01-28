@@ -16,7 +16,7 @@ toml_edit = "0.12.4"
 tracing = "0.1.29"
 tracing-subscriber = { version = "0.3.5", default-features = false, features = [ "alloc", "env-filter", "registry", "std", "fmt" ] }
 tempfile = { version = "3.3.0", optional = true }
-
+cargo_metadata = "*"
 
 [features]
 spawn_xdot = ["tempfile"]

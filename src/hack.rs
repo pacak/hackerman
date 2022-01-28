@@ -1,24 +1,19 @@
-use guppy::graph::feature::{FeatureGraph, FeatureId};
+use cargo_metadata::Metadata;
+use guppy::graph::feature::FeatureId;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
-use guppy::graph::{ExternalSource, PackageMetadata};
 use guppy::platform::{Platform, PlatformStatus};
 use guppy::{DependencyKind, PackageId};
 use petgraph::algo::toposort;
 use petgraph::algo::tred::{dag_to_toposorted_adjacency_list, dag_transitive_reduction_closure};
-use petgraph::graph::Node;
 use petgraph::prelude::NodeIndex;
-use petgraph::visit::{
-    Dfs, DfsPostOrder, EdgeRef, IntoNeighborsDirected, IntoNodeIdentifiers, NodeFiltered, Reversed,
-    Visitable, Walker,
-};
+use petgraph::visit::{Dfs, DfsPostOrder, EdgeRef, NodeFiltered, Walker};
 use petgraph::{EdgeDirection, Graph};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
-use tracing::{debug, info, trace, trace_span, warn, Callsite};
+use tracing::{debug, info, trace, trace_span, warn};
 
-use crate::dump::FeatDepGraph;
-use crate::feat_graph::{Dep, FeatGraph, FeatKind};
+use crate::feat_graph::{Dep, FeatGraph, FeatGraph2, FeatKind};
 use crate::{query::*, toml};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
@@ -58,7 +53,6 @@ fn ws_depends_on(
     package_graph: &PackageGraph,
     a: &PackageId,
     b: &PackageId,
-    kind: DependencyKind,
 ) -> anyhow::Result<bool> {
     if a == b {
         return Ok(false);
@@ -226,7 +220,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
                 // we look for all the packages that import it
                 //
                 // TODO: depends_on is slow with all the nested loops
-                if ws_depends_on(package_graph, patch_id, member.id(), kind)? {
+                if ws_depends_on(package_graph, patch_id, member.id())? {
                     patch.retain(|dep, feats| child_patch.get(dep) != Some(feats));
                 }
             }
@@ -258,8 +252,6 @@ enum Pla {
     Always,
     //    Cond,
 }
-
-type FeatureMap<'a> = BTreeMap<FeatureId<'a>, BTreeSet<(FeatureId<'a>, Pla)>>;
 
 fn follow(here: &Platform, status: PlatformStatus) -> Option<Pla> {
     match status {
@@ -329,164 +321,18 @@ impl<'a> dot::Labeller<'a, FeatureId<'a>, (FeatureId<'a>, FeatureId<'a>)> for FG
 }
 // -----------------------------------------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-enum FeatDep {
-    NotUsed,
-    PackageOnly,
-    FeatUsed,
-}
-
-#[derive(Default, Debug)]
-struct FGraph<'a> {
-    pub graph: Graph<FeatureId<'a>, Pla>,
-    pub nodes: BTreeMap<FeatureId<'a>, petgraph::prelude::NodeIndex>,
-    //    pub crates: BTreeMap<&'a PackageId, BTreeSet<FeatureId<'a>>>,
-    pub workspace: BTreeSet<FeatureId<'a>>,
-
-    pub dependency_cache: BTreeMap<(NodeIndex, FeatureId<'a>), FeatDep>,
-}
-
-impl<'a> FGraph<'a> {
-    fn feat_index(&mut self, fid: FeatureId<'a>) -> petgraph::prelude::NodeIndex {
-        *self
-            .nodes
-            .entry(fid)
-            .or_insert_with(|| self.graph.add_node(fid))
-    }
-
-    fn extend_local_feats(
-        &mut self,
-        start_fid: FeatureId<'a>,
-        feature_graph: &FeatureGraph<'a>,
-    ) -> anyhow::Result<()> {
-        let start_ix = self.feat_index(start_fid);
-
-        for feat in feature_graph
-            .query_forward([start_fid])?
-            .resolve_with_fn(|_query, _link| false)
-            .feature_ids(DependencyDirection::Forward)
-        {
-            if feat == start_fid {
-                continue;
-            }
-            let feat_ix = self.feat_index(feat);
-            if !self.graph.contains_edge(start_ix, feat_ix) {
-                debug_assert!(start_ix != feat_ix);
-                self.graph.add_edge(start_ix, feat_ix, Pla::Always);
-                self.extend_local_feats(feat, feature_graph).unwrap();
-            }
-        }
-
-        Ok(())
-    }
-
-    fn add_workspace_member(
-        &mut self,
-        pkg: PackageMetadata<'a>,
-        features: &FeatureGraph<'a>,
-    ) -> anyhow::Result<()> {
-        let pkg_fid = pkg.default_feature_id();
-        self.workspace.insert(pkg_fid);
-        self.extend_local_feats(pkg_fid, features)
-    }
-
-    fn next_dependency(&self, pg: &PackageGraph) -> Option<petgraph::prelude::NodeIndex> {
-        for ws_fid in self.workspace.iter() {
-            let &ws_ix = self.nodes.get(ws_fid)?;
-
-            let mut dfs = Dfs::new(&self.graph, ws_ix);
-            while let Some(child_ix) = dfs.next(&self.graph) {
-                let child_feat = self.graph[child_ix];
-                if !pg.metadata(child_feat.package_id()).unwrap().in_workspace() {
-                    //                if !self.workspace.contains(&child_feat) {
-                    return Some(child_ix);
-                }
-            }
-        }
-        None
-    }
-
-    fn depends_on_feature(
-        &mut self,
-        start: petgraph::prelude::NodeIndex,
-        target: FeatureId<'a>,
-    ) -> FeatDep {
-        if let Some(&dep) = self.dependency_cache.get(&(start, target)) {
-            return dep;
-        }
-
-        let mut outcome = if self.graph[start] == target {
-            FeatDep::FeatUsed
-        } else if self.graph[start].package_id() == target.package_id() {
-            FeatDep::PackageOnly
-        } else {
-            FeatDep::NotUsed
-        };
-
-        for child in self
-            .graph
-            .neighbors_directed(start, EdgeDirection::Outgoing)
-            .collect::<Vec<_>>()
-            .into_iter()
-        {
-            if outcome == FeatDep::FeatUsed {
-                break;
-            }
-
-            outcome = outcome.max(self.depends_on_feature(child, target));
-        }
-
-        self.dependency_cache.insert((start, target), outcome);
-        outcome
-    }
-
-    fn all_dependencies(
-        &'a self,
-        start: FeatureId<'a>,
-    ) -> impl Iterator<Item = (petgraph::prelude::NodeIndex, FeatureId<'a>)> {
-        let ix = *self.nodes.get(&start).unwrap();
-
-        Dfs::new(&self.graph, ix)
-            .iter(&self.graph)
-            .map(|i| (i, self.graph[i]))
-    }
-
-    fn minimize<'b>(
-        &self,
-        mut set: BTreeSet<&'b PackageId>,
-        package_graph: &'a PackageGraph,
-    ) -> BTreeSet<&'b PackageId> {
-        let mut p2i = BTreeMap::new();
-        let mut i2p = BTreeMap::new();
-
-        for pid in set.iter() {
-            let p = package_graph.metadata(pid).unwrap();
-            let i = self.nodes.get(&p.default_feature_id()).unwrap();
-            p2i.insert(p.id(), i);
-            i2p.insert(i, p.id());
-        }
-
-        let graph = Reversed(&self.graph);
-
-        for (pid, &&ix) in p2i.iter() {
-            for p in Dfs::new(&graph, ix).iter(&graph) {
-                if p == ix {
-                    continue;
-                }
-                if let Some(child) = i2p.get(&p) {
-                    trace!("{pid} subsumes {child}");
-                    set.remove(*child);
-                }
-            }
-        }
-        set
-    }
-}
-
-pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
+pub fn get_changeset2<'a>(
+    package_graph: &'a PackageGraph,
+    meta: &'a Metadata,
+) -> anyhow::Result<Changeset<'a>> {
     let feature_graph = package_graph.feature_graph();
 
-    let mut fg2 = FeatGraph::init(feature_graph)?;
+    let fg2 = FeatGraph2::init(meta)?;
+
+    dump(&fg2);
+    //    todo!("{:?}", meta.resolve.as_ref().unwrap().root);
+
+    let mut fg = FeatGraph::init(feature_graph)?;
 
     let here = Platform::current()?;
 
@@ -509,16 +355,15 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
                 FeatKind::External
             };
 
-            fg2.extend_local_feats(link.to().feature_id(), kind)
-                .unwrap();
+            fg.extend_local_feats(link.to().feature_id(), kind).unwrap();
 
-            let from = *fg2.nodes.get(&link.from().feature_id()).unwrap();
-            let to = fg2.feat_index(link.to().feature_id(), kind);
-            fg2.graph.add_edge(from, to, Dep::Always);
+            let from = *fg.nodes.get(&link.from().feature_id()).unwrap();
+            let to = fg.feat_index(link.to().feature_id(), kind);
+            fg.graph.add_edge(from, to, Dep::Always);
             true
         });
 
-    for feature_id in fg2.features.values() {
+    for feature_id in fg.features.values() {
         if let Some(feat) = feature_id.feature() {
             workspace_feats
                 .entry(feature_id.package_id())
@@ -527,11 +372,11 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
         }
     }
 
-    transitive_reduction(&mut fg2.graph);
+    transitive_reduction(&mut fg.graph);
     let mut changed = BTreeSet::new();
 
     let workspace_only_graph =
-        NodeFiltered::from_fn(&fg2.graph, |node| fg2.graph[node] != FeatKind::External);
+        NodeFiltered::from_fn(&fg.graph, |node| fg.graph[node] != FeatKind::External);
 
     let members_dfs_postorder = DfsPostOrder::new(&workspace_only_graph, NodeIndex::new(0))
         .iter(&workspace_only_graph)
@@ -541,17 +386,18 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
             continue;
         }
 
-        let member = fg2.features.get(&member_ix).unwrap();
+        let member = fg.features.get(&member_ix).unwrap();
         println!("Checking {member}");
 
         let mut deps_feats = BTreeMap::new();
 
         let mut next = Some(member_ix);
-        let mut dfs = Dfs::new(&fg2.graph, member_ix);
+        let mut dfs = Dfs::new(&fg.graph, member_ix);
+        let mut made_changes = false;
         'dependency: while let Some(next_item) = next.take() {
             dfs.move_to(next_item);
-            while let Some(feat_ix) = dfs.next(&fg2.graph) {
-                let feat_id = fg2.features.get(&feat_ix).unwrap();
+            while let Some(feat_ix) = dfs.next(&fg.graph) {
+                let feat_id = fg.features.get(&feat_ix).unwrap();
 
                 let pkg_id = feat_id.package_id();
                 let entry = deps_feats.entry(pkg_id).or_insert_with(BTreeSet::new);
@@ -570,13 +416,20 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
                             changed.insert(member.package_id());
 
                             let missing_feat = FeatureId::new(dep, missing_feat);
-                            let missing_feat_ix = *fg2.nodes.get(&missing_feat).unwrap();
-                            fg2.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
+                            let missing_feat_ix = *fg.nodes.get(&missing_feat).unwrap();
+                            fg.graph.add_edge(member_ix, missing_feat_ix, Dep::Always);
                             next = Some(missing_feat_ix);
+                            made_changes = true;
                             continue 'dependency;
                         }
                     }
                 }
+            }
+
+            if made_changes {
+                made_changes = false;
+                next = Some(member_ix);
+                continue 'dependency;
             }
         }
     }
@@ -586,18 +439,18 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
     for member_id in changed {
         let member = package_graph.metadata(member_id)?;
         //        let member_ix = fg2.nodes.get(&member.default_feature_id()).unwrap();
-        let member_ix = fg2.nodes.get(&FeatureId::base(member.id())).unwrap(); // .default_feature_id()).unwrap();
+        let member_ix = fg.nodes.get(&FeatureId::base(member.id())).unwrap(); // .default_feature_id()).unwrap();
 
         let member_entry = changeset.entry(member_id).or_default();
 
-        for dep_ix in fg2
+        for dep_ix in fg
             .graph
             .neighbors_directed(*member_ix, EdgeDirection::Outgoing)
         {
-            if fg2.graph[dep_ix] != FeatKind::External {
+            if fg.graph[dep_ix] != FeatKind::External {
                 continue;
             }
-            let dep = fg2.features.get(&dep_ix).unwrap();
+            let dep = fg.features.get(&dep_ix).unwrap();
 
             if let Some(feat) = dep.feature() {
                 member_entry
@@ -622,102 +475,17 @@ pub fn get_changeset2(package_graph: &PackageGraph) -> anyhow::Result<Changeset>
     }
 
     Ok(changeset)
-
-    /*
-
-    // traversals here must be performed in topological order, let's leave it for now
-    let indices = fg.nodes.values().copied().collect::<Vec<_>>();
-    loop {
-        println!("elements {}", fg.dependency_cache.len());
-        let mut change = false;
-        for &feat_ix in indices.iter() {
-            //    while let Some(feat_ix) = fg.next_dependency(package_graph) {
-            let feat_id = fg.graph[feat_ix];
-            let feat_pkg = feat_id.package_id();
-
-            let feat = package_graph.metadata(feat_pkg)?;
-            if feat.in_workspace() {
-                continue;
-            }
-            assert!(!feat.in_workspace(), "{feat:?}");
-
-            debug!("\nchecking for {feat_id}");
-
-            for member in package_graph.workspace().iter() {
-                let member_name = member.name();
-                let member_ix = *fg.nodes.get(&member.default_feature_id()).unwrap();
-
-                //fg.dependency_cache.clear();
-                let xxx = fg.depends_on_feature(member_ix, feat_id);
-                //                fg.dependency_cache.clear();
-                //                let xxx2 = fg.depends_on_feature(member_ix, feat_id);
-
-                info!("{} {} {:?}", member.id(), feat_id, xxx);
-
-                match xxx {
-                    FeatDep::NotUsed | FeatDep::FeatUsed => continue,
-                    FeatDep::PackageOnly => {}
-                }
-
-                info!("{member_name} uses {feat_pkg} but not {feat_id}");
-                to_add
-                    .entry(feat_id)
-                    .or_insert_with(BTreeSet::new)
-                    .insert(member.id());
-
-                let member_id = *fg.nodes.get(&member.default_feature_id()).unwrap();
-                info!("Added edge {member_id:?} -> {feat_ix:?}");
-                fg.graph.add_edge(member_id, feat_ix, Pla::Always);
-                change = true;
-
-                fg.dependency_cache.clear();
-            }
-        }
-        if !change {
-            break;
-        }
-    }
-
-    let mut changeset: Changeset = BTreeMap::new();
-
-    for (feat, workspace_crates) in to_add.into_iter() {
-        let workspace_crates = fg2.minimize(workspace_crates, package_graph);
-        for ws_crate in workspace_crates {
-            let ws_crate_deps = changeset.entry(ws_crate).or_insert_with(BTreeMap::new);
-
-            if let Some(feat_name) = feat.feature() {
-                let dependency_feats = ws_crate_deps
-                    .entry(feat.package_id())
-                    .or_insert_with(BTreeSet::new);
-
-                dependency_feats.insert(feat_name);
-            } else {
-                unreachable!("this doesn't make sense")
-            }
-        }
-    }
-
-    for (pkt, changes) in changeset.iter_mut() {
-        println!("{pkt}");
-        for (a, b) in changes.iter_mut() {
-            println!("\t{a} {b:?}");
-            if let Some(existing) = workspace_feats.get(pkt) {
-                if let Some(for_feat) = existing.get(a) {
-                    println!("\t\t{for_feat:?}");
-                    b.extend(for_feat);
-                }
-            }
-        }
-    }
-
-    Ok(changeset)*/
 }
 
 // num-bigint default on textual
 
-pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
-    let kind = DependencyKind::Normal;
-    let map = get_changeset2(package_graph)?;
+pub fn apply(
+    package_graph: &PackageGraph,
+    dry: bool,
+    lock: bool,
+    meta: &Metadata,
+) -> anyhow::Result<()> {
+    let map = get_changeset2(package_graph, meta)?;
     if dry {
         if map.is_empty() {
             println!("Features are unified as is")
@@ -823,3 +591,15 @@ fn dump(fg: &FGraph) -> anyhow::Result<()> {
         .output()?;
     Ok(())
 }*/
+
+fn dump(fg: &FeatGraph2) -> anyhow::Result<()> {
+    use tempfile::NamedTempFile;
+    let mut file = NamedTempFile::new()?;
+    dot::render(&fg, &mut file)?;
+    //dot::render(&fg, &mut std::io::stdout())?;
+    //    todo!("{:?}", s);
+    std::process::Command::new("xdot")
+        .args([file.path()])
+        .output()?;
+    Ok(())
+}

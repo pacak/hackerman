@@ -45,9 +45,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Hack(Hack { dry, lock }) => {
+            let mut cmd = cargo_metadata::MetadataCommand::new();
+            cmd.manifest_path(&manifest);
+
+            let metadata = cmd.exec().unwrap();
+
             //hack::hack33(&manifest)?;
             let g = guppy_graph(&manifest)?;
-            hack::apply(&g, dry, lock)?;
+            hack::apply(&g, dry, lock, &metadata)?;
         }
         Command::Restore(None) => {
             let g = guppy_graph(&manifest)?;
