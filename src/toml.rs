@@ -106,34 +106,24 @@ where
 {
     let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
 
-    let kind = "dependencies";
-
-    let mut has_lock = false;
-    if let Some(t) = toml["package"]["metadata"]["hackerman"].as_table_mut() {
-        t.remove("lock");
-        has_lock = true;
+    let changed = restore_dependencies_toml(&mut toml)?;
+    if changed {
+        std::fs::write(&manifest_path, toml.to_string())?;
     }
+    Ok(())
+}
 
-    let stash_table = match toml["package"]["metadata"]["hackerman"]["stash"].as_table_mut() {
-        Some(table) => match table.remove(kind) {
-            Some(Item::Table(table)) => Some(table),
-            Some(_) => anyhow::bail!("corrupted stash table in {:?}", manifest_path),
-            None => None,
-        },
-        None => None,
+fn restore_dependencies_toml(toml: &mut Document) -> anyhow::Result<bool> {
+    let hackerman = get_table(toml, HACKERMAN_PATH)?;
+    let mut changed = hackerman.remove("lock").is_some();
+
+    let stash_table = match get_table(toml, &["stash"])?.remove("dependencies") {
+        Some(Item::Table(t)) => t,
+        Some(_) => anyhow::bail!("corrupted stash table"),
+        None => return Ok(changed),
     };
 
-    let stash_table = match stash_table {
-        Some(t) => t,
-        None => {
-            if has_lock {
-                std::fs::write(&manifest_path, toml.to_string())?;
-            }
-            return Ok(());
-        }
-    };
-
-    let table = get_table(&mut toml, &[kind])?;
+    let table = get_table(toml, &["dependencies"])?;
     for (key, item) in stash_table.into_iter() {
         if item.is_inline_table() || item.is_str() {
             debug!("Restoring dependency {}: {}", key, item.to_string());
@@ -144,10 +134,10 @@ where
         } else {
             anyhow::bail!("Corrupted key {:?}: {}", key, item.to_string());
         }
+        changed = true;
     }
     table.sort_values();
-    std::fs::write(&manifest_path, toml.to_string())?;
-    Ok(())
+    Ok(changed)
 }
 
 pub fn verify_checksum<P>(manifest_path: P) -> anyhow::Result<()>
@@ -175,4 +165,25 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_removal_works() -> anyhow::Result<()> {
+        let mut s = "[package.metadata.hackerman.lock]\ndependencies = 1".parse()?;
+        restore_dependencies_toml(&mut s)?;
+        assert_eq!(s.to_string(), "");
+        Ok(())
+    }
+
+    #[test]
+    fn lock_removal_works2() -> anyhow::Result<()> {
+        let mut s = "".parse()?;
+        restore_dependencies_toml(&mut s)?;
+        assert_eq!(s.to_string(), "");
+        Ok(())
+    }
 }
