@@ -1,3 +1,6 @@
+use anyhow::Context;
+use guppy::graph::ExternalSource;
+use guppy::Version;
 use guppy::{graph::PackageGraph, PackageId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -5,6 +8,8 @@ use toml_edit::{value, Array, Document, InlineTable, Item, Table, Value};
 use tracing::debug;
 
 const HACKERMAN_PATH: &[&str] = &["package", "metadata", "hackerman"];
+const LOCK_PATH: &[&str] = &["package", "metadata", "hackerman", "lock"];
+const STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dependencies"];
 
 fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a mut Table> {
     for (ix, comp) in path.iter().enumerate() {
@@ -27,40 +32,42 @@ fn get_checksum(table: &Table) -> i64 {
     Hasher::finish(&hasher) as i64
 }
 
-pub fn set_dependencies<P>(
-    manifest_path: P,
-    g: &PackageGraph,
-    patch: &BTreeMap<&PackageId, BTreeSet<&str>>,
+fn set_dependencies_toml<'a, 'b, I>(
+    toml: &'b mut Document,
     lock: bool,
-) -> anyhow::Result<()>
+    changes: I,
+) -> anyhow::Result<bool>
 where
-    P: AsRef<Path> + std::fmt::Debug,
+    I: Iterator<
+        Item = anyhow::Result<(
+            &'a str,
+            &'a Version,
+            ExternalSource<'a>,
+            &'a BTreeSet<&'a str>,
+        )>,
+    >,
 {
-    let kind = "dependencies";
-    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+    let mut res = Vec::new();
+    let mut changed = false;
 
-    let stash = (|| {
-        toml.get("package")?
-            .as_table()?
-            .get("hackerman")?
-            .as_table()?
-            .get("stash")
-    })();
-    if stash.is_some() {
-        anyhow::bail!(
-            "{:?} already contains changes, restore the original files before applying a new hack",
-            manifest_path
-        );
-    }
+    let table = get_table(toml, &["dependencies"])?;
 
-    let table = get_table(&mut toml, &[kind])?;
-    let mut changes = Vec::new();
-    for (package_id, feats) in patch.iter() {
-        let dep = g.metadata(package_id)?;
-        let name = dep.name();
+    for x in changes {
+        let (name, version, src, feats) = x?;
+        changed |= true;
+
+        match src {
+            ExternalSource::Registry(_) => {}
+            ExternalSource::Git {
+                repository: _,
+                req: _,
+                resolved: _,
+            } => todo!(),
+            _ => todo!(),
+        }
 
         let mut new_dep = InlineTable::new();
-        new_dep.insert("version", dep.version().to_string().into());
+        new_dep.insert("version", version.to_string().into());
         let mut feats_arr = Array::new();
         feats_arr.extend(feats.iter().copied().filter(|&f| f != "default"));
         if !feats_arr.is_empty() {
@@ -70,23 +77,27 @@ where
             new_dep.insert("default-features", false.into());
         }
 
-        changes.push((name, table.insert(name, value(new_dep))));
+        res.push((name, table.insert(name, value(new_dep))));
     }
     table.sort_values();
 
     if lock {
+        changed |= true;
         let hash = get_checksum(table);
-        let lock_table = get_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
-        lock_table.insert(kind, value(hash));
+        let lock_table = get_table(toml, LOCK_PATH)?;
+        lock_table.insert("dependencies", value(hash));
         lock_table.sort_values();
         lock_table.set_position(998);
     }
 
-    let stash_table = get_table(
-        &mut toml,
-        &["package", "metadata", "hackerman", "stash", kind],
-    )?;
-    for (name, old) in changes {
+    let stash_table = get_table(toml, STASH_PATH)?;
+    if !stash_table.is_empty() {
+        anyhow::bail!(
+            "Manifest contains changes, restore the original files before applying a new hack",
+        );
+    }
+
+    for (name, old) in res.into_iter() {
         match old {
             Some(t) => stash_table.insert(name, t),
             None => stash_table.insert(name, value(false)),
@@ -94,8 +105,37 @@ where
     }
     stash_table.sort_values();
     stash_table.set_position(999);
+    Ok(changed)
+}
 
-    std::fs::write(&manifest_path, toml.to_string())?;
+pub fn set_dependencies<P>(
+    manifest_path: P,
+    g: &PackageGraph,
+    patch: &BTreeMap<&PackageId, BTreeSet<&str>>,
+    lock: bool,
+) -> anyhow::Result<()>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+
+    let patches = patch.iter().map(|(package_id, feats)| {
+        let package = g.metadata(package_id)?;
+        let name = package.name();
+        let version = package.version();
+        let src = package
+            .source()
+            .parse_external()
+            .ok_or_else(|| anyhow::anyhow!("not an external thing"))?;
+        Ok((name, version, src, feats))
+    });
+
+    let changed = set_dependencies_toml(&mut toml, lock, patches)
+        .with_context(|| format!("Manifest {:?}", manifest_path))?;
+
+    if changed {
+        std::fs::write(&manifest_path, toml.to_string())?;
+    }
 
     Ok(())
 }
