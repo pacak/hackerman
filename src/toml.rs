@@ -24,12 +24,9 @@ fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a 
 }
 
 fn get_checksum(table: &Table) -> i64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-
-    Hash::hash(&table.to_string(), &mut hasher);
-    Hasher::finish(&hasher) as i64
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&table.to_string(), &mut hasher);
+    std::hash::Hasher::finish(&hasher) as i64
 }
 
 fn set_dependencies_toml<'a, 'b, I>(
