@@ -56,18 +56,19 @@ where
         let (name, version, src, feats) = x?;
         changed |= true;
 
+        let mut new_dep = InlineTable::new();
         match src {
-            ExternalSource::Registry(_) => {}
+            ExternalSource::Registry("https://github.com/rust-lang/crates.io-index") => {
+                new_dep.insert("version", version.to_string().into());
+            }
             ExternalSource::Git {
                 repository: _,
                 req: _,
                 resolved: _,
             } => todo!(),
-            _ => todo!(),
+            unsupported => anyhow::bail!("Unsupported source: {:?}", unsupported),
         }
 
-        let mut new_dep = InlineTable::new();
-        new_dep.insert("version", version.to_string().into());
         let mut feats_arr = Array::new();
         feats_arr.extend(feats.iter().copied().filter(|&f| f != "default"));
         if !feats_arr.is_empty() {
@@ -224,6 +225,29 @@ mod tests {
         let mut s = "".parse()?;
         restore_dependencies_toml(&mut s)?;
         assert_eq!(s.to_string(), "");
+        Ok(())
+    }
+
+    #[test]
+    fn set_dependencies_ext_crates() -> anyhow::Result<()> {
+        let mut toml = "[dependencies]".parse::<Document>()?;
+        let version = "1.1.1".parse::<Version>()?;
+        let feats = ["derive"].iter().copied().collect::<BTreeSet<_>>();
+        let src = ExternalSource::Registry("https://github.com/rust-lang/crates.io-index");
+        let deps = [Ok(("parsergen", &version, src, &feats))];
+        set_dependencies_toml(&mut toml, true, deps.into_iter())?;
+        let expected = "\
+[dependencies]
+parsergen = { version = \"1.1.1\", features = [\"derive\"], default-features = false }
+
+[package.metadata.hackerman.lock]
+dependencies = -6893235233160425550
+
+[package.metadata.hackerman.stash.dependencies]
+parsergen = false
+";
+        assert_eq!(toml.to_string(), expected);
+
         Ok(())
     }
 }
