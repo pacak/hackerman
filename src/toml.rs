@@ -158,7 +158,7 @@ fn restore_dependencies_toml(toml: &mut Document) -> anyhow::Result<bool> {
     let hackerman = get_table(toml, HACKERMAN_PATH)?;
     let mut changed = hackerman.remove("lock").is_some();
 
-    let stash_table = match get_table(toml, &["stash"])?.remove("dependencies") {
+    let stash_table = match get_table(hackerman, &["stash"])?.remove("dependencies") {
         Some(Item::Table(t)) => t,
         Some(_) => anyhow::bail!("corrupted stash table"),
         None => return Ok(changed),
@@ -178,6 +178,7 @@ fn restore_dependencies_toml(toml: &mut Document) -> anyhow::Result<bool> {
         changed = true;
     }
     table.sort_values();
+
     Ok(changed)
 }
 
@@ -191,18 +192,16 @@ where
 
     let checksum = get_checksum(table);
 
-    let lock_table = get_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
-    let lock = lock_table
+    let lock_table = get_table(&mut toml, LOCK_PATH)?;
+    if lock_table.is_empty() {
+        return Ok(());
+    }
+    if lock_table
         .get(kind)
-        .ok_or_else(|| {
-            anyhow::anyhow!("Couldn't get saved lock value for {kind} in {manifest_path:?}",)
-        })?
-        .as_integer()
-        .expect("Invalid checksum format for {kind} in {manifest_path:?}");
-
-    if lock != checksum {
-        debug!("Expected: {lock}, actual {checksum}");
-        anyhow::bail!("Checksum mismatch for {kind} in {manifest_path:?}")
+        .and_then(|x| x.as_integer())
+        .map_or(false, |l| l == checksum)
+    {
+        anyhow::bail!("Checksum mismatch in {manifest_path:?}")
     }
 
     Ok(())
@@ -229,8 +228,12 @@ mod tests {
     }
 
     #[test]
-    fn set_dependencies_ext_crates() -> anyhow::Result<()> {
-        let mut toml = "[dependencies]".parse::<Document>()?;
+    fn set_and_restore_dependencies_ext_crates() -> anyhow::Result<()> {
+        let original = "\
+[dependencies]
+parsergen = { version = \"1.1.1\",  default-features = false }
+";
+        let mut toml = original.parse::<Document>()?;
         let version = "1.1.1".parse::<Version>()?;
         let feats = ["derive"].iter().copied().collect::<BTreeSet<_>>();
         let src = ExternalSource::Registry("https://github.com/rust-lang/crates.io-index");
@@ -244,9 +247,13 @@ parsergen = { version = \"1.1.1\", features = [\"derive\"], default-features = f
 dependencies = -6893235233160425550
 
 [package.metadata.hackerman.stash.dependencies]
-parsergen = false
+parsergen = { version = \"1.1.1\",  default-features = false }
 ";
         assert_eq!(toml.to_string(), expected);
+
+        let changed = restore_dependencies_toml(&mut toml)?;
+        assert!(changed);
+        assert_eq!(toml.to_string(), original);
 
         Ok(())
     }
