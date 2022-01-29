@@ -1,27 +1,21 @@
 use guppy::{graph::PackageGraph, PackageId};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
-use toml_edit::{table, value, Array, Document, InlineTable, Item, Table, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+use toml_edit::{value, Array, Document, InlineTable, Item, Table, Value};
 use tracing::debug;
 
-fn to_table<'a>(toml: &'a mut Document, path: &[&str]) -> anyhow::Result<&'a mut Table> {
-    let mut entry = toml
-        .entry(path[0])
-        .or_insert_with(table)
-        .as_table_mut()
-        .ok_or_else(|| anyhow::anyhow!("Expected table"))?;
-    entry.set_implicit(true);
-    for comp in &path[1..] {
-        entry = entry
+const HACKERMAN_PATH: &[&str] = &["package", "metadata", "hackerman"];
+
+fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a mut Table> {
+    for (ix, comp) in path.iter().enumerate() {
+        table = table
             .entry(comp)
-            .or_insert_with(table)
+            .or_insert_with(toml_edit::table)
             .as_table_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected table"))?;
-        entry.set_implicit(true);
+            .ok_or_else(|| anyhow::anyhow!("Expected table at path {}", path[..ix].join(".")))?;
+        table.set_implicit(true);
     }
-    Ok(entry)
+    Ok(table)
 }
 
 fn get_checksum(table: &Table) -> i64 {
@@ -59,7 +53,7 @@ where
         );
     }
 
-    let table = to_table(&mut toml, &[kind])?;
+    let table = get_table(&mut toml, &[kind])?;
     let mut changes = Vec::new();
     for (package_id, feats) in patch.iter() {
         let dep = g.metadata(package_id)?;
@@ -82,13 +76,13 @@ where
 
     if lock {
         let hash = get_checksum(table);
-        let lock_table = to_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
+        let lock_table = get_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
         lock_table.insert(kind, value(hash));
         lock_table.sort_values();
         lock_table.set_position(998);
     }
 
-    let stash_table = to_table(
+    let stash_table = get_table(
         &mut toml,
         &["package", "metadata", "hackerman", "stash", kind],
     )?;
@@ -139,7 +133,7 @@ where
         }
     };
 
-    let table = to_table(&mut toml, &[kind])?;
+    let table = get_table(&mut toml, &[kind])?;
     for (key, item) in stash_table.into_iter() {
         if item.is_inline_table() || item.is_str() {
             debug!("Restoring dependency {}: {}", key, item.to_string());
@@ -162,11 +156,11 @@ where
 {
     let kind = "dependencies";
     let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
-    let table = to_table(&mut toml, &[kind])?;
+    let table = get_table(&mut toml, &[kind])?;
 
     let checksum = get_checksum(table);
 
-    let lock_table = to_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
+    let lock_table = get_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
     let lock = lock_table
         .get(kind)
         .ok_or_else(|| {
