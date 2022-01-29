@@ -86,8 +86,10 @@ will be looking for all of them.
 
 Examples:
 
+```text
     cargo hackerman explain rand 0.8.4
     cargo hackerman explain serde_json preserve_order
+```
 
 ### Hackerman tree
 
