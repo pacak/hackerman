@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 
 use cargo_hackerman::{
-    dupes, explain, hack, mergetool,
+    dupes, explain, feat_graph, hack, mergetool,
     opts::{Command, Hack},
     show_package, tree,
 };
@@ -46,8 +46,16 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Hack(Hack { dry, lock }) => {
+            let mut cmd = cargo_metadata::MetadataCommand::new();
+            cmd.manifest_path(&manifest);
+
+            let metadata = cmd.exec().unwrap();
+
+            let _r = feat_graph::FeatGraph2::init(&metadata)?;
+
+            /*
             let g = guppy_graph(&manifest)?;
-            hack::apply(&g, dry, lock)?;
+            hack::apply(&g, dry, lock)?;*/
         }
         Command::Restore(None) => {
             let g = guppy_graph(&manifest)?;
