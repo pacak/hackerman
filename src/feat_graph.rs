@@ -1,6 +1,7 @@
 use cargo_metadata::{DepKindInfo, Dependency, Metadata, Node, Package, PackageId};
 use dot::{GraphWalk, Labeller};
 use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,18 +21,23 @@ impl<'a> Feature<'a> {
             Feature::Workspace(fid) | Feature::External(fid) => Some(*fid),
         }
     }
+
+    pub fn pid(&self) -> Option<Pid<'a>> {
+        self.fid().map(|fid| fid.0)
+    }
 }
 
 pub struct FeatGraph2<'a> {
     pub workspace_members: BTreeSet<Pid<'a>>,
     pub features: Graph<Feature<'a>, Link<'a>>,
     pub fids: BTreeMap<Fid<'a>, NodeIndex>,
-    pub pids: BTreeMap<Pid<'a>, NodeIndex>,
+    //    pub pids: BTreeMap<Pid<'a>, NodeIndex>,
+    pub platforms: BTreeMap<NodeIndex, Vec<&'a str>>,
     /// this gets N log N resolve
     pub cache: BTreeMap<&'a PackageId, Pid<'a>>,
     pub meta: &'a Metadata,
     pub root: NodeIndex,
-    /// redox_syscall
+    /// blame redox_syscall...
     pub library_renames: BTreeMap<&'a PackageId, &'a str>,
 }
 
@@ -63,7 +69,7 @@ impl<'a> FeatGraph2<'a> {
         })
     }
 
-    pub fn init(meta: &'a Metadata) -> anyhow::Result<Self> {
+    pub fn init(meta: &'a Metadata, platforms: Vec<&'a str>) -> anyhow::Result<Self> {
         let resolves = &meta
             .resolve
             .as_ref()
@@ -98,8 +104,9 @@ impl<'a> FeatGraph2<'a> {
                 .collect::<BTreeSet<_>>(),
             features,
             root,
+            platforms: BTreeMap::new(),
             fids: BTreeMap::new(),
-            pids: BTreeMap::new(),
+            //            pids: BTreeMap::new(),
             library_renames,
             cache,
             meta,
@@ -120,9 +127,51 @@ impl<'a> FeatGraph2<'a> {
             graph.add_package(ix, package, deps)?;
             //println!("\n\n");
         }
+        graph.fill_in_platforms(platforms)?;
         graph.optimize()?;
         dump(&graph)?;
+
         Ok(graph)
+    }
+
+    fn fill_in_platforms(&mut self, platforms: Vec<&'a str>) -> anyhow::Result<()> {
+        let mut to_visit = vec![self.root];
+
+        while let Some(source) = to_visit.pop() {
+            let cur_platforms: Vec<&'a str> = if source == self.root {
+                platforms.clone()
+            } else {
+                self.platforms.get(&source).unwrap().clone()
+            };
+
+            for edge in self
+                .features
+                .edges_directed(source, petgraph::EdgeDirection::Outgoing)
+            {
+                //                if let Some(pid) = self.features[edge.target()].pid() {
+                self.platforms.entry(edge.target()).or_insert_with(|| {
+                    cur_platforms
+                        .iter()
+                        .copied()
+                        .filter(|p| {
+                            edge.weight().kinds.iter().any(|k| {
+                                k.target.as_ref().map_or(true, |t| {
+                                    target_spec::eval(&t.to_string(), p).unwrap().unwrap()
+                                })
+                            }) || edge.weight().kinds.is_empty()
+                        })
+                        .collect::<Vec<_>>()
+                });
+                to_visit.push(edge.target());
+                //                }
+            }
+        }
+
+        for (k, v) in self.platforms.iter() {
+            println!("{:?}: {:?}", k, v);
+        }
+
+        Ok(())
     }
 
     fn transitive_reduction(&mut self) -> anyhow::Result<()> {
@@ -167,7 +216,19 @@ impl<'a> FeatGraph2<'a> {
         Ok(())
     }
 
+    fn trim_unused_platforms(&mut self) -> anyhow::Result<()> {
+        for pid in self
+            .platforms
+            .iter()
+            .filter_map(|(_pid, platforms)| platforms.is_empty().then(|| _pid))
+        {
+            self.features.remove_node(*pid);
+        }
+        Ok(())
+    }
+
     fn optimize(&mut self) -> anyhow::Result<()> {
+        self.trim_unused_platforms()?;
         self.trim_unused_features()?;
         self.transitive_reduction()?;
         Ok(())

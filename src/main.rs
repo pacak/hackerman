@@ -46,12 +46,15 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Hack(Hack { dry, lock }) => {
+            let platform = target_spec::Platform::current()?;
+
             let mut cmd = cargo_metadata::MetadataCommand::new();
             cmd.manifest_path(&manifest);
 
             let metadata = cmd.exec().unwrap();
 
-            let _r = feat_graph::FeatGraph2::init(&metadata)?;
+            let triplets = vec![platform.triple_str()];
+            let _r = feat_graph::FeatGraph2::init(&metadata, triplets)?;
 
             /*
             let g = guppy_graph(&manifest)?;
