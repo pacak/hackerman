@@ -53,8 +53,8 @@ fn main() -> anyhow::Result<()> {
 
             let metadata = cmd.exec().unwrap();
 
-            let triplets = vec![platform.triple_str()];
-            let _r = feat_graph::FeatGraph2::init(&metadata, triplets)?;
+            let triplets = vec![platform.triple_str(), "x86_64-pc-windows-msvc"];
+            let _r = feat_graph::FeatGraph::init(&metadata, triplets)?;
 
             /*
             let g = guppy_graph(&manifest)?;

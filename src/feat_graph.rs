@@ -9,16 +9,30 @@ use tracing::debug;
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
 pub enum Feature<'a> {
-    Root,
-    Workspace(Fid<'a>),
-    External(Fid<'a>),
+    Root(Platforms),
+    Workspace(Platforms, Fid<'a>),
+    External(Platforms, Fid<'a>),
 }
 
 impl<'a> Feature<'a> {
     pub fn fid(&self) -> Option<Fid<'a>> {
         match self {
-            Feature::Root => None,
-            Feature::Workspace(fid) | Feature::External(fid) => Some(*fid),
+            Feature::Root(_) => None,
+            Feature::Workspace(_, fid) | Feature::External(_, fid) => Some(*fid),
+        }
+    }
+
+    pub fn platforms(&self) -> Platforms {
+        match self {
+            Feature::Root(p) => *p,
+            Feature::Workspace(p, _) | Feature::External(p, _) => *p,
+        }
+    }
+
+    pub fn platforms_mut(&mut self) -> &mut Platforms {
+        match self {
+            Feature::Root(p) => p,
+            Feature::Workspace(p, _) | Feature::External(p, _) => p,
         }
     }
 
@@ -27,18 +41,15 @@ impl<'a> Feature<'a> {
     }
 }
 
-pub struct FeatGraph2<'a> {
+pub struct FeatGraph<'a> {
     pub workspace_members: BTreeSet<Pid<'a>>,
     pub features: Graph<Feature<'a>, Link<'a>>,
     pub fids: BTreeMap<Fid<'a>, NodeIndex>,
-    //    pub pids: BTreeMap<Pid<'a>, NodeIndex>,
-    pub platforms: BTreeMap<NodeIndex, Vec<&'a str>>,
-    /// this gets N log N resolve
     pub cache: BTreeMap<&'a PackageId, Pid<'a>>,
     pub meta: &'a Metadata,
     pub root: NodeIndex,
-    /// blame redox_syscall...
     pub library_renames: BTreeMap<&'a PackageId, &'a str>,
+    pub platforms: Vec<&'a str>,
 }
 
 // there are some very strange ideas about what is a valid crate is name and how to compare
@@ -58,13 +69,14 @@ fn find_dep_by_name<'a>(deps: &'a [Dependency], name: &'a str) -> anyhow::Result
         .ok_or_else(|| anyhow::anyhow!("No dependency named {name}"))
 }
 
-impl<'a> FeatGraph2<'a> {
+impl<'a> FeatGraph<'a> {
     pub fn fid_index(&mut self, fid: Fid<'a>) -> NodeIndex {
         *self.fids.entry(fid).or_insert_with(|| {
+            let ps = Platforms::default();
             if self.workspace_members.contains(&fid.0) {
-                self.features.add_node(Feature::Workspace(fid))
+                self.features.add_node(Feature::Workspace(ps, fid))
             } else {
-                self.features.add_node(Feature::External(fid))
+                self.features.add_node(Feature::External(ps, fid))
             }
         })
     }
@@ -84,7 +96,7 @@ impl<'a> FeatGraph2<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let mut features = Graph::new();
-        let root = features.add_node(Feature::Root);
+        let root = features.add_node(Feature::Root(Platforms::new(platforms.len())));
 
         let mut library_renames: BTreeMap<&PackageId, &str> = BTreeMap::new();
         for p in meta.packages.iter() {
@@ -95,7 +107,7 @@ impl<'a> FeatGraph2<'a> {
             }
         }
 
-        let mut graph = FeatGraph2 {
+        let mut graph = FeatGraph {
             workspace_members: meta
                 .workspace_members
                 .iter()
@@ -104,7 +116,7 @@ impl<'a> FeatGraph2<'a> {
                 .collect::<BTreeSet<_>>(),
             features,
             root,
-            platforms: BTreeMap::new(),
+            platforms,
             fids: BTreeMap::new(),
             //            pids: BTreeMap::new(),
             library_renames,
@@ -114,61 +126,54 @@ impl<'a> FeatGraph2<'a> {
 
         for (ix, (package, deps)) in meta.packages.iter().zip(resolves.iter()).enumerate() {
             assert_eq!(package.id, deps.id);
-
-            /*
-            println!("package: {:?}", package);
-            for dep in package.dependencies.iter() {
-                println!("\tspecifd : {dep:?}");
-            }
-            for dep in deps.deps.iter() {
-                println!("\tresolved: {dep:?}");
-            }
-            */
             graph.add_package(ix, package, deps)?;
-            //println!("\n\n");
         }
-        graph.fill_in_platforms(platforms)?;
+        graph.fill_in_platforms()?;
         graph.optimize()?;
-        dump(&graph)?;
+        graph.fids.clear();
+        for node in graph.features.node_indices() {
+            if let Some(fid) = graph.features[node].fid() {
+                graph.fids.insert(fid, node);
+            }
+        }
 
         Ok(graph)
     }
 
-    fn fill_in_platforms(&mut self, platforms: Vec<&'a str>) -> anyhow::Result<()> {
+    fn fill_in_platforms(&mut self) -> anyhow::Result<()> {
         let mut to_visit = vec![self.root];
+        let mut edges = Vec::new();
 
         while let Some(source) = to_visit.pop() {
-            let cur_platforms: Vec<&'a str> = if source == self.root {
-                platforms.clone()
-            } else {
-                self.platforms.get(&source).unwrap().clone()
-            };
+            let platforms = self.features[source].platforms();
 
-            for edge in self
-                .features
-                .edges_directed(source, petgraph::EdgeDirection::Outgoing)
-            {
-                //                if let Some(pid) = self.features[edge.target()].pid() {
-                self.platforms.entry(edge.target()).or_insert_with(|| {
-                    cur_platforms
-                        .iter()
-                        .copied()
-                        .filter(|p| {
-                            edge.weight().kinds.iter().any(|k| {
-                                k.target.as_ref().map_or(true, |t| {
-                                    target_spec::eval(&t.to_string(), p).unwrap().unwrap()
-                                })
-                            }) || edge.weight().kinds.is_empty()
-                        })
-                        .collect::<Vec<_>>()
-                });
-                to_visit.push(edge.target());
-                //                }
+            edges.extend(
+                self.features
+                    .edges_directed(source, petgraph::EdgeDirection::Outgoing)
+                    .map(|er| (er.id(), er.target())),
+            );
+            for (edge_ix, target_ix) in edges.drain(..) {
+                let (edge, target) = self.features.index_twice_mut(edge_ix, target_ix);
+                let mut new_platforms = platforms;
+                if !edge.kinds.is_empty() {
+                    for pla_ix in platforms.iter() {
+                        if !edge.kinds.iter().any(|k| {
+                            k.target.as_ref().map_or(true, |t| {
+                                target_spec::eval(&t.to_string(), self.platforms[pla_ix])
+                                    .unwrap()
+                                    .unwrap()
+                            })
+                        }) {
+                            new_platforms.clear(pla_ix);
+                        }
+                    }
+                }
+                *(target.platforms_mut()) = new_platforms;
+
+                if !new_platforms.is_empty() {
+                    to_visit.push(target_ix);
+                }
             }
-        }
-
-        for (k, v) in self.platforms.iter() {
-            println!("{:?}: {:?}", k, v);
         }
 
         Ok(())
@@ -202,7 +207,7 @@ impl<'a> FeatGraph2<'a> {
         let mut to_remove = Vec::new();
         loop {
             for f in self.features.externals(petgraph::EdgeDirection::Incoming) {
-                if let Feature::External(_) = self.features[f] {
+                if let Feature::External(..) = self.features[f] {
                     to_remove.push(f);
                 }
             }
@@ -217,13 +222,8 @@ impl<'a> FeatGraph2<'a> {
     }
 
     fn trim_unused_platforms(&mut self) -> anyhow::Result<()> {
-        for pid in self
-            .platforms
-            .iter()
-            .filter_map(|(_pid, platforms)| platforms.is_empty().then(|| _pid))
-        {
-            self.features.remove_node(*pid);
-        }
+        self.features
+            .retain_nodes(|g, n| !g[n].platforms().is_empty());
         Ok(())
     }
 
@@ -381,7 +381,7 @@ pub struct Link<'a> {
     pub kinds: &'a [DepKindInfo],
 }
 
-impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph2<'a> {
+impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
     fn nodes(&'a self) -> dot::Nodes<'a, NodeIndex> {
         Cow::from(self.features.node_indices().collect::<Vec<_>>())
     }
@@ -399,7 +399,7 @@ impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph2<'a> {
     }
 }
 
-impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph2<'a> {
+impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
     fn graph_id(&'a self) -> dot::Id<'a> {
         dot::Id::new("graphname").unwrap()
     }
@@ -478,7 +478,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph2<'a> {
     }
 }
 
-fn dump(graph: &FeatGraph2) -> anyhow::Result<()> {
+fn dump(graph: &FeatGraph) -> anyhow::Result<()> {
     use tempfile::NamedTempFile;
     let mut file = NamedTempFile::new()?;
     dot::render(&graph, &mut file)?;
@@ -486,4 +486,43 @@ fn dump(graph: &FeatGraph2) -> anyhow::Result<()> {
         .args([file.path()])
         .output()?;
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct Platforms(usize);
+
+impl Platforms {
+    pub fn iter(&self) -> PlatformIterator {
+        PlatformIterator(self.0)
+    }
+    //  pub fn iter_mut(&mut self, &[&str]) ->
+
+    pub fn new(count: usize) -> Self {
+        assert!(count < 64, "At most 64 unification platforms are supported");
+        Platforms((1 << count) - 1)
+    }
+
+    pub fn clear(&mut self, ix: usize) {
+        self.0 ^= 1 << ix;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+pub struct PlatformIterator(usize);
+
+impl Iterator for PlatformIterator {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0 == 0 {
+            return None;
+        }
+        let lz = self.0.trailing_zeros() as usize;
+        self.0 ^= 1 << lz;
+
+        Some(lz as usize)
+    }
 }
