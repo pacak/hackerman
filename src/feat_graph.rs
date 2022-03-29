@@ -5,7 +5,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::debug;
+use tracing::{debug, info, trace};
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
 pub enum Feature<'a> {
@@ -38,6 +38,30 @@ impl<'a> Feature<'a> {
 
     pub fn pid(&self) -> Option<Pid<'a>> {
         self.fid().map(|fid| fid.0)
+    }
+
+    pub fn package_id(&self) -> Option<&PackageId> {
+        let Pid(pid, meta) = self.pid()?;
+        Some(&meta.packages[pid].id)
+    }
+
+    pub fn feature(&self) -> Option<&'a str> {
+        let fid = self.fid()?;
+        fid.1
+    }
+
+    pub fn is_workspace(&self) -> bool {
+        match self {
+            Feature::Root(_) | Feature::Workspace(_, _) => true,
+            Feature::External(_, _) => false,
+        }
+    }
+
+    pub fn is_root(&self) -> bool {
+        match self {
+            Feature::Root(_) => true,
+            Feature::Workspace(_, _) | Feature::External(_, _) => false,
+        }
     }
 }
 
@@ -128,8 +152,11 @@ impl<'a> FeatGraph<'a> {
             assert_eq!(package.id, deps.id);
             graph.add_package(ix, package, deps)?;
         }
+        info!("Filling in patform info");
         graph.fill_in_platforms()?;
+        info!("Optimizing");
         graph.optimize()?;
+        info!("Rebuilding feature id cache");
         graph.fids.clear();
         for node in graph.features.node_indices() {
             if let Some(fid) = graph.features[node].fid() {
@@ -143,8 +170,15 @@ impl<'a> FeatGraph<'a> {
     fn fill_in_platforms(&mut self) -> anyhow::Result<()> {
         let mut to_visit = vec![self.root];
         let mut edges = Vec::new();
-
+        let mut checked_children = BTreeSet::new();
         while let Some(source) = to_visit.pop() {
+            if checked_children.contains(&source) {
+                continue;
+            } else {
+                checked_children.insert(source);
+            }
+
+            trace!("{:?}", self.features[source].pid());
             let platforms = self.features[source].platforms();
 
             edges.extend(
@@ -247,6 +281,7 @@ impl<'a> FeatGraph<'a> {
             ..
         }: &'a Node,
     ) -> anyhow::Result<()> {
+        debug!("adding {}", package.id);
         let this_package_pid = Pid(ix, self.meta);
         let base_feature = Fid(this_package_pid, None);
         let base_ix = self.fid_index(base_feature);
@@ -342,6 +377,10 @@ impl Pid<'_> {
     pub fn package(&self) -> &cargo_metadata::Package {
         &self.1.packages[self.0]
     }
+
+    pub fn package_id(&self) -> &cargo_metadata::PackageId {
+        &self.1.packages[self.0].id
+    }
 }
 
 impl<'a> PartialEq for Pid<'a> {
@@ -372,13 +411,22 @@ impl std::fmt::Debug for Pid<'_> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Fid<'a>(Pid<'a>, Option<&'a str>);
+pub struct Fid<'a>(pub Pid<'a>, pub Option<&'a str>);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Link<'a> {
     pub optional: bool,
 
     pub kinds: &'a [DepKindInfo],
+}
+
+impl<'a> Link<'a> {
+    pub fn always() -> Self {
+        Self {
+            optional: false,
+            kinds: &[],
+        }
+    }
 }
 
 impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {

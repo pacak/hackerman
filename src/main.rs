@@ -53,9 +53,13 @@ fn main() -> anyhow::Result<()> {
 
             let metadata = cmd.exec().unwrap();
 
-            let triplets = vec![platform.triple_str(), "x86_64-pc-windows-msvc"];
-            let _r = feat_graph::FeatGraph::init(&metadata, triplets)?;
+            let triplets = vec![platform.triple_str()];
+            // let triplets = vec![platform.triple_str(), "x86_64-pc-windows-msvc"];
+            let mut r = feat_graph::FeatGraph::init(&metadata, triplets)?;
 
+            let (cs, rr) = hack::get_changeset2(&mut r)?;
+            hack::apply2(rr, cs)?;
+            //            todo!("{cs:?}");
             /*
             let g = guppy_graph(&manifest)?;
             hack::apply(&g, dry, lock)?;*/

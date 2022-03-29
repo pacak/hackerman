@@ -7,6 +7,8 @@ use std::path::Path;
 use toml_edit::{value, Array, Document, InlineTable, Item, Table, Value};
 use tracing::debug;
 
+use crate::feat_graph::Pid;
+
 const HACKERMAN_PATH: &[&str] = &["package", "metadata", "hackerman"];
 const LOCK_PATH: &[&str] = &["package", "metadata", "hackerman", "lock"];
 const STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dependencies"];
@@ -104,6 +106,32 @@ where
     stash_table.sort_values();
     stash_table.set_position(999);
     Ok(changed)
+}
+
+struct Cfg {
+    lock: bool,
+    banner: bool,
+}
+
+pub fn set_dependencies2(
+    package: &cargo_metadata::Package,
+    patch: BTreeMap<Pid, BTreeSet<&str>>,
+) -> anyhow::Result<()> {
+    let mut toml = std::fs::read_to_string(&package.manifest_path)?.parse::<Document>()?;
+    let patches = patch
+        .iter()
+        .map(|(pid, feats)| {
+            let dep_package = pid.package();
+            let name = &dep_package.name;
+            let src = &dep_package.source.as_ref().unwrap().repr;
+            let source = guppy::graph::ExternalSource::new(src).unwrap();
+            (name, source)
+        })
+        .collect::<Vec<_>>();
+
+    todo!("{:?}", patches);
+
+    Ok(())
 }
 
 pub fn set_dependencies<P>(
@@ -207,6 +235,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn odd_declarations_are_supported() -> anyhow::Result<()> {
+        let mut s = "\
+
+[dependencies]
+by_version_1 = \"1.0\"
+by_version_2 = { version = \"1.0\" }
+from_git = { git = \"https://github.com/rust-lang/regex\" }
+
+[dependencies.fancy]
+version = \"1.0\"
+"
+        .parse::<Document>()?;
+
+        todo!("{:?}", s);
+    }
 
     #[test]
     fn lock_removal_works() -> anyhow::Result<()> {

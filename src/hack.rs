@@ -1,10 +1,12 @@
 use guppy::graph::feature::FeatureId;
 use guppy::graph::{feature::StandardFeatures, DependencyDirection, PackageGraph};
 use guppy::{DependencyKind, PackageId};
+use petgraph::visit::{Dfs, DfsPostOrder, NodeFiltered, Walker};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use tracing::{debug, info, trace, trace_span, warn};
 
+use crate::feat_graph::{FeatGraph, Feature, Fid, Link, Pid};
 use crate::{query::*, toml};
 
 type Changeset<'a> = BTreeMap<&'a PackageId, BTreeMap<&'a PackageId, BTreeSet<&'a str>>>;
@@ -44,7 +46,6 @@ fn ws_depends_on(
     package_graph: &PackageGraph,
     a: &PackageId,
     b: &PackageId,
-    kind: DependencyKind,
 ) -> anyhow::Result<bool> {
     if a == b {
         return Ok(false);
@@ -55,7 +56,103 @@ fn ws_depends_on(
         .contains(b)?)
 }
 
+type FeatChanges<'a> = BTreeMap<Pid<'a>, BTreeMap<Pid<'a>, BTreeSet<&'a str>>>;
+
+pub fn get_changeset2<'a>(
+    fg: &'a mut FeatGraph,
+) -> anyhow::Result<(FeatChanges<'a>, &'a FeatGraph<'a>)> {
+    let mut workspace_feats: BTreeMap<Pid, BTreeSet<&str>> = BTreeMap::new();
+
+    for f in fg.features.node_weights() {
+        if let Feature::External(_, Fid(pid, Some(feat))) = f {
+            workspace_feats
+                .entry(*pid)
+                .or_insert_with(BTreeSet::new)
+                .insert(feat);
+        }
+    }
+    let mut changed = BTreeMap::new();
+
+    let workspace_only_graph =
+        NodeFiltered::from_fn(&fg.features, |node| fg.features[node].is_workspace());
+
+    let members_dfs_postorder = DfsPostOrder::new(&workspace_only_graph, fg.root)
+        .iter(&workspace_only_graph)
+        .collect::<Vec<_>>();
+    for member_ix in members_dfs_postorder {
+        let member = match fg.features[member_ix].pid() {
+            Some(pid) => pid,
+            None => continue,
+        };
+
+        info!("Checking {member:?}");
+
+        let mut deps_feats = BTreeMap::new();
+
+        let mut next = Some(member_ix);
+        let mut dfs = Dfs::new(&fg.features, member_ix);
+        let mut made_changes = false;
+        'dependency: while let Some(next_item) = next.take() {
+            dfs.move_to(next_item);
+            // DFS traverse of the current member and all added
+            while let Some(feat_ix) = dfs.next(&fg.features) {
+                let feat_id: Feature<'a> = fg.features[feat_ix];
+
+                let pkg_id = feat_id.pid().unwrap(); // package_id().unwrap();
+                let entry = deps_feats.entry(pkg_id).or_insert_with(BTreeSet::new);
+
+                if let Some(feat) = feat_id.feature() {
+                    entry.insert(feat);
+                }
+            }
+
+            for (dep, feats) in deps_feats.iter() {
+                if let Some(ws_feats) = workspace_feats.get(dep) {
+                    if ws_feats != feats {
+                        if let Some(missing_feat) = ws_feats.difference(feats).next() {
+                            info!("\t{missing_feat:?} is missing from {dep:?}",);
+
+                            changed
+                                .entry(member)
+                                .or_insert_with(BTreeMap::default)
+                                .entry(*dep)
+                                .or_insert_with(BTreeSet::default)
+                                .insert(*missing_feat);
+
+                            let missing_feat = Fid(*dep, Some(missing_feat)); //FeatureId::new(dep, missing_feat);
+                            let missing_feat_ix = *fg.fids.get(&missing_feat).unwrap();
+                            fg.features
+                                .add_edge(member_ix, missing_feat_ix, Link::always());
+                            next = Some(missing_feat_ix);
+                            made_changes = true;
+                            continue 'dependency;
+                        }
+                    }
+                }
+            }
+
+            if made_changes {
+                made_changes = false;
+                next = Some(member_ix);
+                continue 'dependency;
+            }
+        }
+    }
+
+    for (k, v) in changed.iter() {
+        debug!("{k:?}");
+        for (kk, vv) in v.iter() {
+            debug!("\t{kk:?}: {vv:?}");
+        }
+    }
+
+    //    todo!("{:?}", changed);
+    Ok((changed, fg))
+    //    todo!();
+}
+
 fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
+    // {{{
     let kind = DependencyKind::Normal;
 
     let feature_graph = package_graph.feature_graph();
@@ -212,7 +309,7 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
                 // we look for all the packages that import it
                 //
                 // TODO: depends_on is slow with all the nested loops
-                if ws_depends_on(package_graph, patch_id, member.id(), kind)? {
+                if ws_depends_on(package_graph, patch_id, member.id())? {
                     patch.retain(|dep, feats| child_patch.get(dep) != Some(feats));
                 }
             }
@@ -239,8 +336,24 @@ fn get_changeset(package_graph: &PackageGraph) -> anyhow::Result<Changeset> {
     Ok(patches_to_add)
 }
 
+// }}}
+
+pub fn apply2(features: &FeatGraph, changeset: FeatChanges) -> anyhow::Result<()> {
+    if changeset.is_empty() {
+        info!("Nothing to do!");
+        return Ok(());
+    }
+
+    for (member, additions) in changeset.into_iter() {
+        let package = member.package();
+        toml::set_dependencies2(package, additions)?;
+        //        let manifest = member.package().manifest_path;
+    }
+
+    Ok(())
+}
+
 pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Result<()> {
-    let kind = DependencyKind::Normal;
     let map = get_changeset(package_graph)?;
     if dry {
         if map.is_empty() {
@@ -291,7 +404,6 @@ pub fn apply(package_graph: &PackageGraph, dry: bool, lock: bool) -> anyhow::Res
 }
 
 pub fn restore(package_graph: PackageGraph) -> anyhow::Result<()> {
-    let kind = DependencyKind::Normal;
     let mut changes = false;
     for package in package_graph
         .query_workspace()
