@@ -1,10 +1,10 @@
-use std::{ffi::OsStr, path::Path};
+use std::ffi::OsStr;
 
 use tempfile::Builder;
 
 use crate::toml::restore_dependencies;
 
-pub fn merge(base: &OsStr, local: &OsStr, remote: &OsStr, merged: &OsStr) -> anyhow::Result<()> {
+pub fn merge(base: &OsStr, local: &OsStr, remote: &OsStr, _merged: &OsStr) -> anyhow::Result<()> {
     let nbase = Builder::new()
         .prefix("Cargo_BASE_")
         .suffix(".toml")
@@ -38,10 +38,15 @@ pub fn merge(base: &OsStr, local: &OsStr, remote: &OsStr, merged: &OsStr) -> any
         .arg("-p")
         .output()?;
 
+    // check merge code
+    let code = output.status.code().unwrap_or(-1);
+    if code != 0 {
+        std::process::exit(code);
+    }
+
     let merged_bytes = output.stdout;
-    let code = output.status;
 
-    std::fs::write(merged, &merged_bytes)?;
+    std::fs::write(local, &merged_bytes)?;
 
-    std::process::exit(code.code().unwrap_or(-1));
+    Ok(())
 }
