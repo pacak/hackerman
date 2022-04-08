@@ -187,14 +187,6 @@ fn dry_run() -> Parser<bool> {
         .switch()
 }
 
-pub fn options() -> OptionParser<(Level, OsString, Command)> {
-    Info::default().for_parser(command(
-        "hackerman",
-        Some("A set of commands to do strange things to the workspace"),
-        options_inner(),
-    ))
-}
-
 fn custom_manifest() -> Parser<OsString> {
     long("manifest-path")
         .help("Path to Cargo.toml")
@@ -204,17 +196,18 @@ fn custom_manifest() -> Parser<OsString> {
 
 // For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
 // command.
-fn options_inner() -> OptionParser<(Level, OsString, Command)> {
+pub fn options() -> OptionParser<(Level, OsString, Command)> {
     let v = verbosity();
-    let cmd = explain_cmd()
-        .or_else(hack_cmd())
-        .or_else(restore_cmd())
-        .or_else(duplicates_cmd())
-        .or_else(verify_cmd())
-        .or_else(tree_cmd())
-        .or_else(merge_driver_cmd())
-        .or_else(show_cmd());
-    let custom_manifest = custom_manifest();
-    let opts = construct!(v, custom_manifest, cmd);
-    Info::default().for_parser(opts)
+    let cmd = construct!([
+        explain_cmd(),
+        hack_cmd(),
+        restore_cmd(),
+        duplicates_cmd(),
+        verify_cmd(),
+        tree_cmd(),
+        merge_driver_cmd(),
+        show_cmd()
+    ]);
+    let opts = construct!(v, custom_manifest(), cmd);
+    Info::default().for_parser(cargo_helper("hackerman", opts))
 }
