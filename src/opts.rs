@@ -60,7 +60,7 @@ fn merge_driver_cmd() -> Parser<Command> {
     let result = positional_os("RESULT");
     let info = Info::default()
         .descr(msg)
-        .for_parser(apply!(Mergedriver(base, local, remote, result)));
+        .for_parser(construct!(Mergedriver(base, local, remote, result)));
     command("merge", Some(msg), info)
 }
 
@@ -102,7 +102,7 @@ fn show_cmd() -> Parser<Command> {
     use Command::ShowPackage;
     let info = Info::default()
         .descr(msg)
-        .for_parser(apply!(ShowPackage(package, version, focus)));
+        .for_parser(construct!(ShowPackage(package, version, focus)));
     command("show", Some(msg), info)
 }
 
@@ -156,7 +156,7 @@ fn tree_cmd() -> Parser<Command> {
         |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
         "You need to specify a valid semver compatible version",
     );
-    let p = tuple!(package, feature, version);
+    let p = construct!(package, feature, version);
     let info = Info::default()
         .descr(descr)
         .footer(include_str!("../doc/tree.md"))
@@ -215,6 +215,6 @@ fn options_inner() -> OptionParser<(Level, OsString, Command)> {
         .or_else(merge_driver_cmd())
         .or_else(show_cmd());
     let custom_manifest = custom_manifest();
-    let opts = tuple!(v, custom_manifest, cmd);
+    let opts = construct!(v, custom_manifest, cmd);
     Info::default().for_parser(opts)
 }

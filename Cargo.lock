@@ -22,8 +22,21 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bpaf"
+version = "0.3.2"
+source = "git+https://github.com/pacak/bpaf?rev=db66f67#db66f679e3850d69b5be0bcc67a971542be466f6"
+dependencies = [
+ "bpaf_derive",
+]
+
+[[package]]
+name = "bpaf_derive"
 version = "0.1.0"
-source = "git+https://github.com/pacak/bpaf?rev=448ec93#448ec931b689f339a7404ce0525f18b9a28bffd5"
+source = "git+https://github.com/pacak/bpaf?rev=db66f67#db66f679e3850d69b5be0bcc67a971542be466f6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "bytes"

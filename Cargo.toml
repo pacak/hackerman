@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.52"
-bpaf = { git = "https://github.com/pacak/bpaf", rev = "448ec93" }
+bpaf = { git = "https://github.com/pacak/bpaf", rev = "db66f67", features = ["derive"] }
 dot = "0.1.4"
 guppy = "0.12.6"
 semver = "1.0.4"
