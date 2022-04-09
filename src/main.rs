@@ -1,23 +1,24 @@
 use std::ffi::OsStr;
 
 use cargo_hackerman::{
-    dupes, explain, hack, mergetool,
-    opts::{Command, Hack},
-    show_package, tree,
+    hack::hack,
+    opts::{self, Action},
 };
-use guppy::DependencyKind;
+use cargo_metadata::MetadataCommand;
+//use guppy::DependencyKind;
+use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+/*
 fn guppy_graph(path: &OsStr) -> anyhow::Result<guppy::graph::PackageGraph> {
     use guppy::{graph::PackageGraph, MetadataCommand};
     let mut cmd = MetadataCommand::new();
     Ok(PackageGraph::from_command(
         cmd.manifest_path(path), // .other_options(["--filter-platform", "x86_64-unknown-linux-gnu"]),
     )?)
-}
+}*/
 
-fn main() -> anyhow::Result<()> {
-    let (level, manifest, cmd) = cargo_hackerman::opts::options().run();
+fn start_subscriber(level: Level) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| (EnvFilter::default().add_directive(level.into())));
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -29,6 +30,23 @@ fn main() -> anyhow::Result<()> {
         .with(filter)
         .with(fmt_layer)
         .init();
+}
+
+fn main() -> anyhow::Result<()> {
+    match opts::action().run() {
+        Action::Hack { profile, dry, lock } => {
+            start_subscriber(profile.verbosity);
+            let metadata = profile.exec()?;
+            hack(dry, lock, &metadata)?;
+        }
+    }
+    Ok(())
+
+    /*
+
+    println!("{:?}", cargo_hackerman::opts::action().run());
+
+    let (level, manifest, cmd) = cargo_hackerman::opts::options().run();
 
     let kind = DependencyKind::Normal;
     match cmd {
@@ -82,5 +100,5 @@ fn main() -> anyhow::Result<()> {
             show_package(&g, &pkg, ver.as_deref(), focus)?;
         }
     }
-    Ok(())
+    Ok(())*/
 }

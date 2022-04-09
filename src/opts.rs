@@ -1,7 +1,157 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, path::PathBuf};
 
 use bpaf::*;
+use cargo_metadata::Metadata;
 use tracing::Level;
+
+#[derive(Debug, Clone, Bpaf)]
+#[bpaf(options("hackerman"))]
+pub enum Action {
+    #[bpaf(command)]
+    /// Unify crate dependencies across individual crates in the workspace
+    Hack {
+        #[bpaf(external(profile))]
+        profile: Profile,
+        /// don't perform action, only display it
+        dry: bool,
+        /// Include dependencies checksum into stash
+        lock: bool,
+    },
+    /*
+    /// Restore files and merge with the default merge driver
+    #[bpaf(command("merge"))]
+    MergeDriver {
+        #[bpaf(positional("BASE"))]
+        base: OsString,
+        #[bpaf(positional("LOCAL"))]
+        local: OsString,
+        #[bpaf(positional("REMOTE"))]
+        remote: OsString,
+        #[bpaf(positional("RESULT"))]
+        result: OsString,
+    },
+    */
+    /*
+        #[bpaf(command)]
+        /// Explain why some dependency is present. Both feature and version are optional
+        Explain {
+            #[bpaf(external(profile))]
+            profile: Profile,
+
+            #[bpaf(positional("CRATE"))]
+            krate: String,
+            #[bpaf(external(feature_if))]
+            feature: Option<String>,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+        },
+    */
+    /*
+        #[bpaf(command)]
+        /// Remove crate dependency unification added by the 'hack' command
+        ///
+        ///
+        /// Will restore one Cargo.toml file if specified or all the Cargo.toml files if not
+        Restore {
+            #[bpaf(external(profile))]
+            profile: Profile,
+
+            #[bpaf(positional("TOML"))]
+            toml: Option<OsString>,
+        },
+
+        /// Lists all the duplicates in the workspace
+        #[bpaf(command)]
+        Dupes {
+            #[bpaf(external(profile))]
+            profile: Profile,
+        },
+
+        /// Check if unification is required
+        #[bpaf(command)]
+        Verify {
+            #[bpaf(external(profile))]
+            profile: Profile,
+        },
+
+        /// Workspace tree or crate tree
+        #[bpaf(command)]
+        Tree {
+            #[bpaf(external(profile))]
+            profile: Profile,
+            #[bpaf(positional("CRATE"))]
+            krate: Option<String>,
+            #[bpaf(external(feature_if))]
+            feature: Option<String>,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+        },
+
+        #[bpaf(command("show"))]
+        /// Show info about a crate
+        ShowCrate {
+            #[bpaf(external(profile))]
+            profile: Profile,
+            #[bpaf(positional("CRATE"))]
+            krate: String,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+            #[bpaf(external(focus), optional)]
+            focus: Option<Focus>,
+        },
+
+    */
+}
+
+fn feature_if() -> Parser<Option<String>> {
+    positional_if("FEATURE", |v| !is_version(v))
+}
+
+fn version_if() -> Parser<Option<String>> {
+    positional_if("VERSION", is_version)
+}
+
+#[derive(Debug, Clone, Bpaf)]
+pub struct Profile {
+    #[bpaf(argument_os("PATH"), fallback(profile_fallback()))]
+    /// Path to Cargo.toml file, defaults to one in current directory
+    pub manifest_path: PathBuf,
+
+    /// Require Cargo.lock and cache are up to date
+    pub frozen: bool,
+    /// Require Cargo.lock is up to date
+    pub locked: bool,
+    /// Run without accessing the network
+    pub offline: bool,
+
+    #[bpaf(external)]
+    pub verbosity: Level,
+}
+
+impl Profile {
+    pub fn exec(&self) -> anyhow::Result<Metadata> {
+        let mut cmd = cargo_metadata::MetadataCommand::new();
+
+        let mut extra = Vec::new();
+        if self.frozen {
+            extra.push(String::from("--frozen"))
+        }
+        if self.locked {
+            extra.push(String::from("--locked"))
+        }
+        if self.offline {
+            extra.push(String::from("--offline"))
+        }
+        cmd.manifest_path(&self.manifest_path);
+        cmd.other_options(extra);
+
+        Ok(cmd.exec()?)
+    }
+}
+
+fn profile_fallback() -> PathBuf {
+    "Cargo.toml".into()
+}
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -16,10 +166,16 @@ pub enum Command {
     Mergedriver(OsString, OsString, OsString, OsString),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Bpaf)]
 pub enum Focus {
+    #[bpaf(short, long)]
+    /// Show crate manifest
     Manifest,
+    #[bpaf(short, long)]
+    /// Show crate readme
     Readme,
+    #[bpaf(short, long("doc"))]
+    /// Open documentation URL
     Documentation,
 }
 

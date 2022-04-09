@@ -1,15 +1,16 @@
 #![doc = include_str!("../README.md")]
 
-use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata};
-use opts::Focus;
-
+//use guppy::graph::{DependencyDirection, PackageGraph, PackageMetadata};
+//use opts::Focus;
+pub mod feat_graph;
+pub mod hack;
+pub mod opts;
+/*
 pub mod dump;
 pub mod dupes;
 pub mod explain;
-pub mod feat_graph;
 pub mod hack;
 pub mod mergetool;
-pub mod opts;
 pub mod query;
 pub mod toml;
 pub mod tree;
@@ -161,3 +162,4 @@ pub fn show_package(
 
     Ok(())
 }
+*/
