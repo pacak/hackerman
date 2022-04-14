@@ -163,6 +163,57 @@ where
         std::fs::write(&manifest_path, toml.to_string())?;
     }
 
+    /*
+    <<<<<<< HEAD
+    =======
+        let table = to_table(&mut toml, &[kind])?;
+        let mut changes = Vec::new();
+        for (package_id, feats) in patch.iter() {
+            let dep = g.metadata(package_id)?;
+            let name = dep.name();
+
+            todo!("look at {:?}", dep.source().parse_external());
+            let mut new_dep = InlineTable::new();
+            let semver = dep.version();
+            let version = format!("{}.{}.{}", semver.major, semver.minor, semver.patch);
+            new_dep.insert("version", version.into());
+            let mut feats_arr = Array::new();
+            feats_arr.extend(feats.iter().copied().filter(|&f| f != "default"));
+            if !feats_arr.is_empty() {
+                new_dep.insert("features", Value::Array(feats_arr));
+            }
+            if !feats.contains("default") {
+                new_dep.insert("default-features", false.into());
+            }
+
+            changes.push((name, table.insert(name, value(new_dep))));
+        }
+        table.sort_values();
+
+        if lock {
+            let hash = get_checksum(table);
+            let lock_table = to_table(&mut toml, &["package", "metadata", "hackerman", "lock"])?;
+            lock_table.insert(kind, value(hash));
+            lock_table.sort_values();
+            lock_table.set_position(998);
+        }
+
+        let stash_table = to_table(
+            &mut toml,
+            &["package", "metadata", "hackerman", "stash", kind],
+        )?;
+        for (name, old) in changes {
+            match old {
+                Some(t) => stash_table.insert(name, t),
+                None => stash_table.insert(name, value(false)),
+            };
+        }
+        stash_table.sort_values();
+        stash_table.set_position(999);
+
+        std::fs::write(&manifest_path, toml.to_string())?;
+
+    >>>>>>> 62f396f */
     Ok(())
 }
 

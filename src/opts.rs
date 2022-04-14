@@ -1,7 +1,157 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, path::PathBuf};
 
 use bpaf::*;
+use cargo_metadata::Metadata;
 use tracing::Level;
+
+#[derive(Debug, Clone, Bpaf)]
+#[bpaf(options("hackerman"))]
+pub enum Action {
+    #[bpaf(command)]
+    /// Unify crate dependencies across individual crates in the workspace
+    Hack {
+        #[bpaf(external(profile))]
+        profile: Profile,
+        /// don't perform action, only display it
+        dry: bool,
+        /// Include dependencies checksum into stash
+        lock: bool,
+    },
+    /*
+    /// Restore files and merge with the default merge driver
+    #[bpaf(command("merge"))]
+    MergeDriver {
+        #[bpaf(positional("BASE"))]
+        base: OsString,
+        #[bpaf(positional("LOCAL"))]
+        local: OsString,
+        #[bpaf(positional("REMOTE"))]
+        remote: OsString,
+        #[bpaf(positional("RESULT"))]
+        result: OsString,
+    },
+    */
+    /*
+        #[bpaf(command)]
+        /// Explain why some dependency is present. Both feature and version are optional
+        Explain {
+            #[bpaf(external(profile))]
+            profile: Profile,
+
+            #[bpaf(positional("CRATE"))]
+            krate: String,
+            #[bpaf(external(feature_if))]
+            feature: Option<String>,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+        },
+    */
+    /*
+        #[bpaf(command)]
+        /// Remove crate dependency unification added by the 'hack' command
+        ///
+        ///
+        /// Will restore one Cargo.toml file if specified or all the Cargo.toml files if not
+        Restore {
+            #[bpaf(external(profile))]
+            profile: Profile,
+
+            #[bpaf(positional("TOML"))]
+            toml: Option<OsString>,
+        },
+
+        /// Lists all the duplicates in the workspace
+        #[bpaf(command)]
+        Dupes {
+            #[bpaf(external(profile))]
+            profile: Profile,
+        },
+
+        /// Check if unification is required
+        #[bpaf(command)]
+        Verify {
+            #[bpaf(external(profile))]
+            profile: Profile,
+        },
+
+        /// Workspace tree or crate tree
+        #[bpaf(command)]
+        Tree {
+            #[bpaf(external(profile))]
+            profile: Profile,
+            #[bpaf(positional("CRATE"))]
+            krate: Option<String>,
+            #[bpaf(external(feature_if))]
+            feature: Option<String>,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+        },
+
+        #[bpaf(command("show"))]
+        /// Show info about a crate
+        ShowCrate {
+            #[bpaf(external(profile))]
+            profile: Profile,
+            #[bpaf(positional("CRATE"))]
+            krate: String,
+            #[bpaf(external(version_if))]
+            version: Option<String>,
+            #[bpaf(external(focus), optional)]
+            focus: Option<Focus>,
+        },
+
+    */
+}
+
+fn feature_if() -> Parser<Option<String>> {
+    positional_if("FEATURE", |v| !is_version(v))
+}
+
+fn version_if() -> Parser<Option<String>> {
+    positional_if("VERSION", is_version)
+}
+
+#[derive(Debug, Clone, Bpaf)]
+pub struct Profile {
+    #[bpaf(argument_os("PATH"), fallback(profile_fallback()))]
+    /// Path to Cargo.toml file, defaults to one in current directory
+    pub manifest_path: PathBuf,
+
+    /// Require Cargo.lock and cache are up to date
+    pub frozen: bool,
+    /// Require Cargo.lock is up to date
+    pub locked: bool,
+    /// Run without accessing the network
+    pub offline: bool,
+
+    #[bpaf(external)]
+    pub verbosity: Level,
+}
+
+impl Profile {
+    pub fn exec(&self) -> anyhow::Result<Metadata> {
+        let mut cmd = cargo_metadata::MetadataCommand::new();
+
+        let mut extra = Vec::new();
+        if self.frozen {
+            extra.push(String::from("--frozen"))
+        }
+        if self.locked {
+            extra.push(String::from("--locked"))
+        }
+        if self.offline {
+            extra.push(String::from("--offline"))
+        }
+        cmd.manifest_path(&self.manifest_path);
+        cmd.other_options(extra);
+
+        Ok(cmd.exec()?)
+    }
+}
+
+fn profile_fallback() -> PathBuf {
+    "Cargo.toml".into()
+}
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -16,10 +166,16 @@ pub enum Command {
     Mergedriver(OsString, OsString, OsString, OsString),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Bpaf)]
 pub enum Focus {
+    #[bpaf(short, long)]
+    /// Show crate manifest
     Manifest,
+    #[bpaf(short, long)]
+    /// Show crate readme
     Readme,
+    #[bpaf(short, long("doc"))]
+    /// Open documentation URL
     Documentation,
 }
 
@@ -60,7 +216,7 @@ fn merge_driver_cmd() -> Parser<Command> {
     let result = positional_os("RESULT");
     let info = Info::default()
         .descr(msg)
-        .for_parser(apply!(Mergedriver(base, local, remote, result)));
+        .for_parser(construct!(Mergedriver(base, local, remote, result)));
     command("merge", Some(msg), info)
 }
 
@@ -102,7 +258,7 @@ fn show_cmd() -> Parser<Command> {
     use Command::ShowPackage;
     let info = Info::default()
         .descr(msg)
-        .for_parser(apply!(ShowPackage(package, version, focus)));
+        .for_parser(construct!(ShowPackage(package, version, focus)));
     command("show", Some(msg), info)
 }
 
@@ -156,7 +312,7 @@ fn tree_cmd() -> Parser<Command> {
         |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
         "You need to specify a valid semver compatible version",
     );
-    let p = tuple!(package, feature, version);
+    let p = construct!(package, feature, version);
     let info = Info::default()
         .descr(descr)
         .footer(include_str!("../doc/tree.md"))
@@ -187,14 +343,6 @@ fn dry_run() -> Parser<bool> {
         .switch()
 }
 
-pub fn options() -> OptionParser<(Level, OsString, Command)> {
-    Info::default().for_parser(command(
-        "hackerman",
-        Some("A set of commands to do strange things to the workspace"),
-        options_inner(),
-    ))
-}
-
 fn custom_manifest() -> Parser<OsString> {
     long("manifest-path")
         .help("Path to Cargo.toml")
@@ -204,17 +352,18 @@ fn custom_manifest() -> Parser<OsString> {
 
 // For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
 // command.
-fn options_inner() -> OptionParser<(Level, OsString, Command)> {
+pub fn options() -> OptionParser<(Level, OsString, Command)> {
     let v = verbosity();
-    let cmd = explain_cmd()
-        .or_else(hack_cmd())
-        .or_else(restore_cmd())
-        .or_else(duplicates_cmd())
-        .or_else(verify_cmd())
-        .or_else(tree_cmd())
-        .or_else(merge_driver_cmd())
-        .or_else(show_cmd());
-    let custom_manifest = custom_manifest();
-    let opts = tuple!(v, custom_manifest, cmd);
-    Info::default().for_parser(opts)
+    let cmd = construct!([
+        explain_cmd(),
+        hack_cmd(),
+        restore_cmd(),
+        duplicates_cmd(),
+        verify_cmd(),
+        tree_cmd(),
+        merge_driver_cmd(),
+        show_cmd()
+    ]);
+    let opts = construct!(v, custom_manifest(), cmd);
+    Info::default().for_parser(cargo_helper("hackerman", opts))
 }

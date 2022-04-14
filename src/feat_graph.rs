@@ -1,16 +1,24 @@
-use cargo_metadata::{DepKindInfo, Dependency, Metadata, Node, Package, PackageId};
+use cargo_metadata::{
+    DepKindInfo, Dependency, DependencyKind, Metadata, NodeDep, Package, PackageId,
+};
 use dot::{GraphWalk, Labeller};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
+/// An node for feature graph
+///
+/// contains information about platforms, package_id and a feature
 pub enum Feature<'a> {
+    /// "root" node, contains links to all the workspace
     Root(Platforms),
+    /// Fid is a workspace member
     Workspace(Platforms, Fid<'a>),
+    /// Fid is not a workspace member
     External(Platforms, Fid<'a>),
 }
 
@@ -37,7 +45,7 @@ impl<'a> Feature<'a> {
     }
 
     pub fn pid(&self) -> Option<Pid<'a>> {
-        self.fid().map(|fid| fid.0)
+        self.fid().map(|fid| fid.pid)
     }
 
     pub fn package_id(&self) -> Option<&PackageId> {
@@ -45,10 +53,11 @@ impl<'a> Feature<'a> {
         Some(&meta.packages[pid].id)
     }
 
-    pub fn feature(&self) -> Option<&'a str> {
+    /*
+    pub fn feature(&self) -> Option<Feat<'a>> {
         let fid = self.fid()?;
-        fid.1
-    }
+        fid.dep
+    }*/
 
     pub fn is_workspace(&self) -> bool {
         match self {
@@ -66,14 +75,24 @@ impl<'a> Feature<'a> {
 }
 
 pub struct FeatGraph<'a> {
-    pub workspace_members: BTreeSet<Pid<'a>>,
-    pub features: Graph<Feature<'a>, Link<'a>>,
-    pub fids: BTreeMap<Fid<'a>, NodeIndex>,
-    pub cache: BTreeMap<&'a PackageId, Pid<'a>>,
-    pub meta: &'a Metadata,
-    pub root: NodeIndex,
-    pub library_renames: BTreeMap<&'a PackageId, &'a str>,
-    pub platforms: Vec<&'a str>,
+    /// set of workspace members
+    workspace_members: BTreeSet<Pid<'a>>,
+    /// a dependency graph between features
+    /// Feature = Fid + decoration if it's external, internal or root
+    features: Graph<Feature<'a>, Link<'a>>,
+    /// A way to look up fids in features
+    fids: BTreeMap<Fid<'a>, NodeIndex>,
+    /// a lookup cache from cargo metadata's PackageId to hackerman's Pid
+    cache: BTreeMap<&'a PackageId, Pid<'a>>,
+    /// cargo metadata
+    meta: &'a Metadata,
+    /// root node, should be 0
+    root: NodeIndex,
+    /// library renames
+    library_renames: BTreeMap<&'a PackageId, &'a str>,
+    platforms: Vec<&'a str>,
+
+    triggers: BTreeMap<(Fid<'a>, Fid<'a>), Fid<'a>>,
 }
 
 // there are some very strange ideas about what is a valid crate is name and how to compare
@@ -97,7 +116,7 @@ impl<'a> FeatGraph<'a> {
     pub fn fid_index(&mut self, fid: Fid<'a>) -> NodeIndex {
         *self.fids.entry(fid).or_insert_with(|| {
             let ps = Platforms::default();
-            if self.workspace_members.contains(&fid.0) {
+            if self.workspace_members.contains(&fid.pid) {
                 self.features.add_node(Feature::Workspace(ps, fid))
             } else {
                 self.features.add_node(Feature::External(ps, fid))
@@ -106,11 +125,13 @@ impl<'a> FeatGraph<'a> {
     }
 
     pub fn init(meta: &'a Metadata, platforms: Vec<&'a str>) -> anyhow::Result<Self> {
+        /*
         let resolves = &meta
             .resolve
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Couldn't resolve the depdendencies"))?
             .nodes;
+        */
 
         let cache = meta
             .packages
@@ -131,7 +152,10 @@ impl<'a> FeatGraph<'a> {
             }
         }
 
-        let mut graph = FeatGraph {
+        for p in cache.iter() {
+            println!("{:?}", p)
+        }
+        let mut graph = Self {
             workspace_members: meta
                 .workspace_members
                 .iter()
@@ -142,16 +166,23 @@ impl<'a> FeatGraph<'a> {
             root,
             platforms,
             fids: BTreeMap::new(),
-            //            pids: BTreeMap::new(),
+            triggers: BTreeMap::new(),
             library_renames,
             cache,
             meta,
         };
 
-        for (ix, (package, deps)) in meta.packages.iter().zip(resolves.iter()).enumerate() {
+        /*
+        for (ix, (package, deps)) in std::iter::zip(&meta.packages, resolves).enumerate() {
+            // .iter().zip(resolves.iter()).enumerate() {
             assert_eq!(package.id, deps.id);
             graph.add_package(ix, package, deps)?;
+        }*/
+
+        for (ix, package) in meta.packages.iter().enumerate() {
+            graph.add_package(ix, package, &meta.packages)?;
         }
+
         info!("Filling in patform info");
         graph.fill_in_platforms()?;
         info!("Optimizing");
@@ -216,12 +247,17 @@ impl<'a> FeatGraph<'a> {
     fn transitive_reduction(&mut self) -> anyhow::Result<()> {
         let graph = &mut self.features;
         let before = graph.edge_count();
-        let toposort = petgraph::algo::toposort(&*graph, None)
-            .expect("cycling dependencies are not supported");
-        let (adj_list, revmap) = petgraph::algo::tred::dag_to_toposorted_adjacency_list::<
-            _,
-            NodeIndex,
-        >(&*graph, &toposort);
+        let toposort = match petgraph::algo::toposort(&*graph, None) {
+            Ok(t) => t,
+            Err(err) => {
+                error!("Cyclic dependencies are detected {err:?}, skipping transitive reduction");
+                return Ok(());
+            }
+        };
+
+        use petgraph::algo::tred::dag_to_toposorted_adjacency_list;
+        let (adj_list, revmap) =
+            dag_to_toposorted_adjacency_list::<_, NodeIndex>(&*graph, &toposort);
         let (reduction, _closure) =
             petgraph::algo::tred::dag_transitive_reduction_closure(&adj_list);
 
@@ -271,103 +307,265 @@ impl<'a> FeatGraph<'a> {
     fn add_package(
         &mut self,
         ix: usize,
-        package @ Package {
-            dependencies: specified_deps,
-            ..
-        }: &'a Package,
-        Node {
-            deps: resolved_deps,
-            // features: specified_features,
-            ..
-        }: &'a Node,
+        package: &'a Package,
+        packages: &[Package], //        Node {
+                              //            deps: resolved_deps,
+                              // features: specified_features,
+                              //            ..
+                              //        }: &'a Node
     ) -> anyhow::Result<()> {
         debug!("adding {}", package.id);
-        let this_package_pid = Pid(ix, self.meta);
-        let base_feature = Fid(this_package_pid, None);
-        let base_ix = self.fid_index(base_feature);
+        let this_pid = Pid(ix, self.meta);
+        let base_ix = self.fid_index(this_pid.base_feat());
 
-        let root_link = Link {
-            optional: false,
-            kinds: &[],
-        };
-        if self.workspace_members.contains(&this_package_pid) {
+        // retain links to workspace members from root
+        // if default feature is present - link to that, otherwise link to base
+        if self.workspace_members.contains(&this_pid) {
             if package.features.contains_key("default") {
-                let default_ix = self.fid_index(Fid(this_package_pid, Some("default")));
-                self.features.add_edge(self.root, default_ix, root_link);
+                let default_ix = self.fid_index(this_pid.named_feat("default"));
+                self.features.add_edge(self.root, default_ix, Link::ALWAYS);
             } else {
-                self.features.add_edge(self.root, base_ix, root_link);
+                self.features.add_edge(self.root, base_ix, Link::ALWAYS);
+            }
+        }
+
+        // resolve and cache crate dependencies and create a cache mapping name to dep
+        let mut deps = BTreeMap::new();
+        for dep in &package.dependencies {
+            println!("{:?}", dep);
+            let resolved = match packages
+                .iter()
+                .find(|p| p.name == dep.name && dep.req.matches(&p.version))
+            {
+                Some(res) => res,
+                None => {
+                    debug!(
+                        "cargo metadta did not include optional dependency \"{} {}\" requested by \"{} {}\", skipping",
+                        dep.name, dep.req, package.name, package.version
+                    );
+                    continue;
+                }
+            };
+
+            let dep_pid = *self
+                .cache
+                .get(&resolved.id)
+                .ok_or_else(|| anyhow::anyhow!("No cached value for {:?}", resolved.id))?;
+            let dep_index = self.fid_index(dep_pid.base_feat());
+            if !dep.optional {
+                self.features
+                    .add_edge(base_ix, dep_index, Link::kind(dep.kind));
+            }
+            deps.insert(
+                dep.rename
+                    .as_ref()
+                    .map_or_else(|| resolved.name.clone(), |r| r.clone()),
+                resolved,
+            );
+        }
+
+        for (this_feat, feat_deps) in package.features.iter() {
+            let feat_ix = self.fid_index(this_pid.named_feat(this_feat));
+
+            println!("adding {base_ix:?} -> {feat_ix:?}");
+            self.features.add_edge(feat_ix, base_ix, Link::OPT);
+
+            for feat_dep in feat_deps.iter() {
+                match FeatTarget::from(feat_dep.as_str()) {
+                    FeatTarget::Named { name } => {
+                        let other_ix = self.fid_index(this_pid.named_feat(name));
+                        self.features.add_edge(feat_ix, other_ix, Link::OPT);
+                    }
+                    FeatTarget::Dependency { krate } => {
+                        if let Some(dep) =
+                            deps.get(krate).and_then(|d| self.cache.get(&d.id).copied())
+                        {
+                            let other_ix = self.fid_index(dep.base_feat());
+                            self.features.add_edge(feat_ix, other_ix, Link::OPT);
+                        } else {
+                            debug!("skipping disabled optional dependency {krate}");
+                        }
+                    }
+                    FeatTarget::Remote { krate, feat } => {
+                        if let Some(dep) =
+                            deps.get(krate).and_then(|d| self.cache.get(&d.id).copied())
+                        {
+                            let other_ix = self.fid_index(dep.named_feat(feat));
+
+                            self.features.add_edge(feat_ix, other_ix, Link::OPT);
+                        } else {
+                            debug!("skipping disabled optional dependency {krate}");
+                        }
+                    }
+                    FeatTarget::Cond { krate, feat } => {
+                        if let Some(dep) =
+                            deps.get(krate).and_then(|d| self.cache.get(&d.id).copied())
+                        {
+                            let a = this_pid.named_feat(this_feat);
+                            let b = this_pid.named_feat(krate);
+                            let c = dep.named_feat(feat);
+
+                            self.triggers.insert((a, b), c);
+                        } else {
+                            debug!("skipping disabled optional dependency {krate}");
+                        }
+
+                        // features `a` and `b` combined should trigger feature `c`
+                    }
+                }
             }
         }
 
         // handle dependencies to other packages:
         // optional dependency depends on a local feature with the same name
         // unconditional dependency depends on the base feature
-        for resolved_dep in resolved_deps.iter() {
-            let specified_dep = match self.library_renames.get(&resolved_dep.pkg) {
-                Some(name) => find_dep_by_name(specified_deps, &resolved_dep.name)
-                    .or_else(|_| find_dep_by_name(specified_deps, name))?,
-                None => find_dep_by_name(specified_deps, &resolved_dep.name)?,
-            };
+        //        for resolved_dep in resolved_deps.iter() {
+        //            info!("\t{:?}", resolved_dep);
 
-            let dep_pid = *self.cache.get(&resolved_dep.pkg).unwrap();
-            let link = Link {
-                optional: specified_dep.optional,
-                kinds: &resolved_dep.dep_kinds,
-            };
-            let link_source = if link.optional {
-                self.fid_index(Fid(this_package_pid, Some(&resolved_dep.name)))
-            } else {
-                self.fid_index(Fid(this_package_pid, None))
-            };
+        //            let specified_dep = match self.library_renames.get(&resolved_dep.pkg) {
+        //                Some(name) => find_dep_by_name(specified_deps, &resolved_dep.name)
+        //                    .or_else(|_| find_dep_by_name(specified_deps, name))?,
+        //                None => find_dep_by_name(specified_deps, &resolved_dep.name)?,
+        //            };
 
-            if specified_dep.features.is_empty() {
-                let base_dep_ix = self.fid_index(Fid(dep_pid, None));
-                self.features.add_edge(link_source, base_dep_ix, link);
-            } else {
-                for feat in specified_dep.features.iter() {
-                    let feat_dep_ix = self.fid_index(Fid(dep_pid, Some(feat)));
-                    self.features.add_edge(link_source, feat_dep_ix, link);
-                }
+        //            let dep_pid = *self.cache.get(&resolved_dep.pkg).unwrap();
+        //            let link = Link {
+        //                optional: specified_dep.optional,
+        //                kinds: &resolved_dep.dep_kinds,
+        //            };
+
+        /*            let link_source = if !link.optional {
+            self.fid_index(Fid {
+                pid: this_package_pid,
+                dep: Feat::Dependency(&resolved_dep.name),
+            })
+        } else {
+            self.fid_index(Fid {
+                pid: this_package_pid,
+                dep: Feat::Base,
+            })
+        };
+
+        if specified_dep.features.is_empty() {
+            let base_dep_ix = self.fid_index(Fid {
+                pid: dep_pid,
+                dep: Feat::Base,
+            });
+            self.features.add_edge(link_source, base_dep_ix, link);
+        } else {
+            for feat in specified_dep.features.iter() {
+                let feat_dep_ix = self.fid_index(Fid {
+                    pid: dep_pid,
+                    dep: Feat::Named(feat),
+                });
+                self.features.add_edge(link_source, feat_dep_ix, link);
             }
-        }
+        }*/
+        //        }
+
+        println!("{:?} {:?}", package.name, package.features);
+
+        //        let pid_by_name = |name| {};
 
         // handle local dependencies
-        for (local_feat, local_deps) in package.features.iter() {
-            let local_ix = self.fid_index(Fid(this_package_pid, Some(local_feat)));
+        for (local_feat, feat_deps) in package.features.iter() {
+            let local_ix = self.fid_index(Fid {
+                pid: this_pid,
+                dep: Feat::Named(local_feat),
+            });
 
-            let local_link = Link {
-                optional: false,
-                kinds: &[],
-            };
-            self.features.add_edge(local_ix, base_ix, local_link);
+            println!("\t{:?} -> {:?}", local_feat, feat_deps);
 
-            for other in local_deps.iter() {
-                match other.split_once('/') {
-                    Some((other_name, other_feat)) => {
-                        let dep_declaration = find_dep_by_name(specified_deps, other_name)?;
-                        if let Some(dep_resolution) =
-                            resolved_deps.iter().find(|d| name_cmp(other_name, &d.name))
-                        {
-                            let dep_pid = *self.cache.get(&dep_resolution.pkg).unwrap();
-                            let link = Link {
-                                optional: dep_declaration.optional,
-                                kinds: &dep_resolution.dep_kinds,
-                            };
-                            let local_ix = self.fid_index(Fid(this_package_pid, Some(local_feat)));
-                            let other_ix = self.fid_index(Fid(dep_pid, Some(other_feat)));
-                            self.features.add_edge(local_ix, other_ix, link);
-                        }
+            self.features.add_edge(local_ix, base_ix, Link::OPT);
+
+            /*
+            for other in feat_deps.iter() {
+                match FeatTarget::from(other.as_str()) {
+                    FeatTarget::Named { name } => {
+                        let other_ix = self.fid_index(Fid {
+                            pid: this_package_pid,
+                            dep: Feat::Named(name),
+                        });
+
+                        self.features.add_edge(local_ix, other_ix, Link::OPT);
                     }
-                    None => {
-                        let other_ix = self.fid_index(Fid(this_package_pid, Some(other)));
-                        self.features.add_edge(local_ix, other_ix, local_link);
+                    FeatTarget::Dependency { krate } => {
+                        let other_ix = self.fid_index(Fid {
+                            pid: pid_from_name(&self.cache, krate, resolved_deps)?,
+                            dep: Feat::Base,
+                        });
+                        self.features.add_edge(local_ix, other_ix, Link::OPT);
+                    }
+                    FeatTarget::Remote { krate, feat } => {
+                        let other_ix = self.fid_index(Fid {
+                            pid: pid_from_name(&self.cache, krate, resolved_deps)?,
+                            dep: Feat::Named(feat),
+                        });
+                        self.features.add_edge(local_ix, other_ix, Link::OPT);
+                    }
+                    FeatTarget::Cond { krate: _, feat: _ } => {
+                        // let other_ix = self.fid_index(Fid {
+                        //     pid: pid_from_name(&self.cache, krate, resolved_deps)?,
+                        //     dep: Feat::Named(feat),
+                        // });
+                        // self.features.add_edge(local_ix, other_ix, Link::OPT);
                     }
                 }
-            }
+
+                /*
+                if let Some((other_name, other_feat)) = other.split_once('/') {
+                    let dep_declaration = find_dep_by_name(specified_deps, other_name)?;
+                    if let Some(dep_resolution) =
+                        resolved_deps.iter().find(|d| name_cmp(other_name, &d.name))
+                    {
+                        let dep_pid = *self.cache.get(&dep_resolution.pkg).unwrap();
+                        let link = Link {
+                            optional: dep_declaration.optional,
+                            kinds: &dep_resolution.dep_kinds,
+                        };
+                        let local_ix = self.fid_index(Fid {
+                            pid: this_package_pid,
+                            dep: Feat::Named(local_feat),
+                        });
+                        let other_ix = self.fid_index(Fid {
+                            pid: dep_pid,
+                            dep: Feat::Named(other_feat),
+                        });
+                        self.features.add_edge(local_ix, other_ix, link);
+                    }
+                } else if let Some(dep) = other.strip_prefix("dep:") {
+                    let other_ix = self.fid_index(Fid {
+                        pid: this_package_pid,
+                        dep: Feat::Dependency(dep),
+                    });
+                    self.features.add_edge(local_ix, other_ix, local_link);
+                } else {
+                    let other_ix = self.fid_index(Fid {
+                        pid: this_package_pid,
+                        dep: Feat::Named(other),
+                    });
+                    self.features.add_edge(local_ix, other_ix, local_link);
+                } */
+            }*/
         }
 
         Ok(())
     }
+}
+
+fn pid_from_name<'a>(
+    cache: &BTreeMap<&'a PackageId, Pid<'a>>,
+    name: &str,
+    resolved: &[NodeDep],
+) -> anyhow::Result<Pid<'a>> {
+    println!("{:?}", resolved);
+    let wrong_name = || anyhow::anyhow!("{name:?} is not a valid resolved crate");
+    let dep = resolved
+        .iter()
+        .find(|d| name_cmp(name, &d.name))
+        .ok_or_else(wrong_name)?;
+
+    Ok(*cache.get(&dep.pkg).ok_or_else(wrong_name)?)
 }
 
 #[derive(Copy, Clone)]
@@ -380,6 +578,20 @@ impl Pid<'_> {
 
     pub fn package_id(&self) -> &cargo_metadata::PackageId {
         &self.1.packages[self.0].id
+    }
+}
+impl<'a> Pid<'a> {
+    pub fn base_feat(self) -> Fid<'a> {
+        Fid {
+            pid: self,
+            dep: Feat::Base,
+        }
+    }
+    pub fn named_feat(self, name: &'a str) -> Fid<'a> {
+        Fid {
+            pid: self,
+            dep: Feat::Named(name),
+        }
     }
 }
 
@@ -411,22 +623,43 @@ impl std::fmt::Debug for Pid<'_> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Fid<'a>(pub Pid<'a>, pub Option<&'a str>);
+pub struct Fid<'a> {
+    /// this feature originates from
+    pub pid: Pid<'a>,
+    pub dep: Feat<'a>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Feat<'a> {
+    /// Base package itself
+    Base,
+    /// internally defined named feature
+    Named(&'a str),
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Link<'a> {
+    /// if dependency is specified as optional or required
     pub optional: bool,
 
-    pub kinds: &'a [DepKindInfo],
+    pub kind: DependencyKind,
+    //    pub kinds: &'a [DepKindInfo],
 }
 
 impl<'a> Link<'a> {
-    pub fn always() -> Self {
-        Self {
-            optional: false,
-            kinds: &[],
-        }
-    }
+    /// unconditional link
+    pub const ALWAYS: Link<'static> = Link {
+        optional: false,
+        kind: DependencyKind::Normal,
+    };
+
+    /// optional lib dependency
+    pub const OPT: Link<'static> = Link {
+        optional: true,
+        kinds: &[],
+    };
+
+    pub fn kind(x: DepKindInfo) -> Self {}
 }
 
 impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
@@ -464,14 +697,17 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
         let mut fmt = String::new();
         match self.features[*n].fid() {
             Some(fid) => {
-                let pid = fid.0;
+                let pid = fid.pid;
                 let graph = pid.1;
                 let pkt = &graph.packages[pid.0];
                 fmt.push_str(&pkt.name);
                 fmt.push_str(&format!(" {}", pkt.version));
-                if let Some(feature) = fid.1 {
-                    fmt.push('\n');
-                    fmt.push_str(feature);
+                match fid.dep {
+                    Feat::Base => {}
+                    Feat::Named(name) => {
+                        fmt.push('\n');
+                        fmt.push_str(name);
+                    }
                 }
 
                 dot::LabelText::LabelStr(fmt.into())
@@ -487,7 +723,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
 
     fn node_style(&'a self, n: &NodeIndex) -> dot::Style {
         if let Some(fid) = self.features[*n].fid() {
-            if self.workspace_members.contains(&fid.0) {
+            if self.workspace_members.contains(&fid.pid) {
                 dot::Style::None
             } else {
                 dot::Style::Filled
@@ -526,7 +762,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
     }
 }
 
-fn dump(graph: &FeatGraph) -> anyhow::Result<()> {
+pub fn dump(graph: &FeatGraph) -> anyhow::Result<()> {
     use tempfile::NamedTempFile;
     let mut file = NamedTempFile::new()?;
     dot::render(&graph, &mut file)?;
@@ -543,7 +779,6 @@ impl Platforms {
     pub fn iter(&self) -> PlatformIterator {
         PlatformIterator(self.0)
     }
-    //  pub fn iter_mut(&mut self, &[&str]) ->
 
     pub fn new(count: usize) -> Self {
         assert!(count < 64, "At most 64 unification platforms are supported");
@@ -572,5 +807,101 @@ impl Iterator for PlatformIterator {
         self.0 ^= 1 << lz;
 
         Some(lz as usize)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum FeatTarget<'a> {
+    Named { name: &'a str },
+    Dependency { krate: &'a str },
+    Remote { krate: &'a str, feat: &'a str },
+    Cond { krate: &'a str, feat: &'a str },
+}
+
+impl<'a> From<&'a str> for FeatTarget<'a> {
+    fn from(s: &'a str) -> Self {
+        if let Some(krate) = s.strip_prefix("dep:") {
+            FeatTarget::Dependency { krate }
+        } else if let Some((krate, feat)) = s.split_once("?/") {
+            FeatTarget::Cond { krate, feat }
+        } else if let Some((krate, feat)) = s.split_once('/') {
+            FeatTarget::Remote { krate, feat }
+        } else {
+            FeatTarget::Named { name: s }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn feat_target() {
+        use FeatTarget::*;
+        assert_eq!(FeatTarget::from("quote"), Named { name: "quote" });
+        assert_eq!(
+            FeatTarget::from("dep:serde_json"),
+            Dependency {
+                krate: "serde_json"
+            }
+        );
+        assert_eq!(
+            FeatTarget::from("syn/extra-tr"),
+            Remote {
+                krate: "syn",
+                feat: "extra-tr"
+            }
+        );
+        assert_eq!(
+            FeatTarget::from("rgb?/serde"),
+            Cond {
+                krate: "rgb",
+                feat: "serde"
+            }
+        );
+    }
+
+    fn get_demo_meta(ix: usize) -> anyhow::Result<Metadata> {
+        let path = format!("{}/demo/{ix}/metadata.json", env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read_to_string(path)?;
+        Ok(cargo_metadata::MetadataCommand::parse(data)?)
+    }
+
+    fn process_snapshot(ix: usize, do_dump: bool) -> anyhow::Result<()> {
+        let meta = get_demo_meta(ix)?;
+        let platform = target_spec::Platform::current()?;
+        let triplets = vec![platform.triple_str()];
+        let fg = FeatGraph::init(&meta, triplets)?;
+
+        if do_dump {
+            dump(&fg)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_snapshot_1() -> anyhow::Result<()> {
+        process_snapshot(1, true)?;
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_snapshot_2() -> anyhow::Result<()> {
+        process_snapshot(2, true)?;
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_snapshot_3() -> anyhow::Result<()> {
+        process_snapshot(3, true)?;
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_snapshot_4() -> anyhow::Result<()> {
+        process_snapshot(4, false)?;
+        todo!();
+        Ok(())
     }
 }

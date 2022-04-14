@@ -131,3 +131,28 @@ explain.md
 show.md
 tree.md
 
+
+### Hackerman mergetool
+
+Resolves merge and rebase conflicts for Cargo.toml files changed by hackerman
+
+To use it you want something like this
+
+global `.gitconfig` or local `.git/config`.
+```ignore
+[merge "hackerman"]
+    name = merge restored files with hackerman
+    driver = cargo hackerman merge %O %A %B %P
+```
+
+gitattributes file, could be local per project or global
+```ignore
+Cargo.toml merge=hackerman
+```
+
+To create a global gitattributes file you need to specify a path to it inside the global git
+config:
+```ignore
+[core]
+    attributesfile = ~/.gitattributes
+```

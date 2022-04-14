@@ -1,0 +1,1 @@
+workspace.members = ["bin-one", "bin-two", "shared"]

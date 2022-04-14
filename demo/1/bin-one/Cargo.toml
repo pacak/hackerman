@@ -1,0 +1,10 @@
+[package]
+name = "bin-one"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+shared = { path = "../shared" }
+alpha = { path = "../alpha/" }
