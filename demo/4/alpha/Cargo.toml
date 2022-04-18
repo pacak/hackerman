@@ -5,8 +5,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-beta = { path = "../beta" }
+
+
+
+[target.'cfg(target_family = "unix")'.dependencies]
+beta = { path = "../beta", features = ["unix"] }
+[target.'cfg(target_family = "windows")'.dependencies]
+beta = { path = "../beta", features = ["windows"] }
 
 [features]
 debug = ["beta/debug"]

@@ -12,3 +12,5 @@ beta = { path = ".", features = ["debug"] }
 
 [features]
 debug = []
+unix = []
+windows = []

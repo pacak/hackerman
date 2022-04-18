@@ -5,7 +5,7 @@ use cargo_metadata::Metadata;
 use tracing::Level;
 
 #[derive(Debug, Clone, Bpaf)]
-#[bpaf(options("hackerman"))]
+#[bpaf(options("hackerman"), version)]
 pub enum Action {
     #[bpaf(command)]
     /// Unify crate dependencies across individual crates in the workspace
@@ -17,20 +17,36 @@ pub enum Action {
         /// Include dependencies checksum into stash
         lock: bool,
     },
-    /*
+
+    /// Remove crate dependency unification added by the 'hack' command
+    #[bpaf(command)]
+    Restore {
+        #[bpaf(external(profile))]
+        profile: Profile,
+        /// Restore single file instead of the whole workspace
+        #[bpaf(positional_os("TOML"))]
+        single: Option<PathBuf>,
+    },
+
+    /// Check if unification is required and if checksums are correct
+    #[bpaf(command)]
+    Check {
+        #[bpaf(external(profile))]
+        profile: Profile,
+    },
+
     /// Restore files and merge with the default merge driver
     #[bpaf(command("merge"))]
     MergeDriver {
         #[bpaf(positional("BASE"))]
-        base: OsString,
+        base: PathBuf,
         #[bpaf(positional("LOCAL"))]
-        local: OsString,
+        local: PathBuf,
         #[bpaf(positional("REMOTE"))]
-        remote: OsString,
+        remote: PathBuf,
         #[bpaf(positional("RESULT"))]
-        result: OsString,
+        result: PathBuf,
     },
-    */
     /*
         #[bpaf(command)]
         /// Explain why some dependency is present. Both feature and version are optional
@@ -47,18 +63,6 @@ pub enum Action {
         },
     */
     /*
-        #[bpaf(command)]
-        /// Remove crate dependency unification added by the 'hack' command
-        ///
-        ///
-        /// Will restore one Cargo.toml file if specified or all the Cargo.toml files if not
-        Restore {
-            #[bpaf(external(profile))]
-            profile: Profile,
-
-            #[bpaf(positional("TOML"))]
-            toml: Option<OsString>,
-        },
 
         /// Lists all the duplicates in the workspace
         #[bpaf(command)]
@@ -206,20 +210,6 @@ fn explain() -> Parser<Explain> {
     })
 }
 
-fn merge_driver_cmd() -> Parser<Command> {
-    let msg = "Restore files and merge with the default merge driver";
-    use Command::Mergedriver;
-
-    let base = positional_os("BASE");
-    let local = positional_os("LOCAL");
-    let remote = positional_os("REMOTE");
-    let result = positional_os("RESULT");
-    let info = Info::default()
-        .descr(msg)
-        .for_parser(construct!(Mergedriver(base, local, remote, result)));
-    command("merge", Some(msg), info)
-}
-
 fn explain_cmd() -> Parser<Command> {
     let msg = "Explain why a certain crate or a feature is included in the workspace";
     let info = Info::default()
@@ -352,7 +342,7 @@ fn custom_manifest() -> Parser<OsString> {
 
 // For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
 // command.
-pub fn options() -> OptionParser<(Level, OsString, Command)> {
+fn options() -> OptionParser<(Level, OsString, Command)> {
     let v = verbosity();
     let cmd = construct!([
         explain_cmd(),
@@ -361,7 +351,6 @@ pub fn options() -> OptionParser<(Level, OsString, Command)> {
         duplicates_cmd(),
         verify_cmd(),
         tree_cmd(),
-        merge_driver_cmd(),
         show_cmd()
     ]);
     let opts = construct!(v, custom_manifest(), cmd);

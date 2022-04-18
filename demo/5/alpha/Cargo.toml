@@ -1,0 +1,15 @@
+[package]
+name = "alpha"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+beta = { path = "../beta" }
+gamma = { path = "../gamma", optional = true }
+
+
+[features]
+one = ["dep:gamma", "gamma?/one"]
+default = ["one"]

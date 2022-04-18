@@ -1,23 +1,25 @@
 [package]
 name = "cargo-hackerman"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.52"
-# bpaf = { git = "https://github.com/pacak/bpaf", rev = "6cc8b76127ca95e318a127ee55ae290b75bf48e4", features = ["derive"] }
-bpaf = { path = "../bpaf", features = ["derive"] }
+bpaf = { version = "0.4", features = ["derive"] } # { path = "../bpaf", features = ["derive"] }
+cargo-platform = "0.1"
+cargo_metadata = { version = "0.14" }
 dot = "0.1.4"
-target-spec = "1.0"
-semver = "1.0"
+pathdiff = { version = "0.2", features = ["camino"] }
 petgraph = "0.6.0"
+semver = "1.0"
+serde_json = "1.0"
+target-spec = "1.0"
+tempfile = { version = "3.3.0", optional = true }
 toml_edit = "0.14"
 tracing = "0.1.29"
 tracing-subscriber = { version = "0.3.5", default-features = false, features = [ "alloc", "env-filter", "registry", "std", "fmt" ] }
-tempfile = { version = "3.3.0", optional = true }
-cargo_metadata = "0.14"
 
 [features]
 spawn_xdot = ["tempfile"]
