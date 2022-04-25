@@ -125,7 +125,7 @@ impl<'a> Collect<'a> {
 // 4. starting from a workspace member, dev for that membe only
 
 fn collect_features_from<M>(
-    mut dfs: Dfs<NodeIndex, M>,
+    dfs: &mut Dfs<NodeIndex, M>,
     fg: &FeatGraph,
     to: &mut DetachedDepTree,
     filter: Collect,
@@ -169,7 +169,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         // indices correspond to features in graph
         let mut raw_workspace_feats: DetachedDepTree = BTreeMap::new();
         collect_features_from(
-            Dfs::new(&fg.features, fg.root),
+            &mut Dfs::new(&fg.features, fg.root),
             fg,
             &mut raw_workspace_feats,
             Collect::All,
@@ -181,7 +181,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         // that.
         let mut filtered_workspace_feats = BTreeMap::new();
         collect_features_from(
-            Dfs::new(&fg.features, fg.root),
+            &mut Dfs::new(&fg.features, fg.root),
             fg,
             &mut filtered_workspace_feats,
             Collect::Target,
@@ -233,12 +233,10 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             // For every workspace member we start collecting features it uses, similar to
             // workspace_feats above
 
-            let mut deps_feats;
+            let mut dfs = Dfs::new(&fg.features, member_ix);
+            let mut deps_feats = BTreeMap::new();
             'dependency: loop {
-                let dfs = Dfs::new(&fg.features, member_ix);
-                deps_feats = BTreeMap::new();
-
-                collect_features_from(dfs, fg, &mut deps_feats, Collect::NoDev);
+                collect_features_from(&mut dfs, fg, &mut deps_feats, Collect::NoDev);
 
                 debug!(
                     "Accumulated deps for {:?} are as following:{}",
@@ -257,7 +255,13 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                                     .or_insert_with(BTreeMap::default)
                                     .insert((Ty::Norm, dep), ws_feats.clone());
 
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
+                                let new_dep = fg.add_edge(
+                                    member_ix,
+                                    missing_feat,
+                                    false,
+                                    DepKindInfo::NORMAL,
+                                )?;
+                                dfs.move_to(new_dep);
 
                                 trace!("Performing one more iteration on {member:?}");
                                 continue 'dependency;
@@ -282,12 +286,11 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                 continue;
             }
 
+            let mut dfs = Dfs::new(&fg.features, member_ix);
+            let mut dev_feats = BTreeMap::new();
             'dev_dependency: loop {
-                let dfs = Dfs::new(&fg.features, member_ix);
-                let mut dev_feats = BTreeMap::new();
-
                 // DFS traverse of the current member and everything below it
-                collect_features_from(dfs, fg, &mut dev_feats, Collect::MemberDev(member));
+                collect_features_from(&mut dfs, fg, &mut dev_feats, Collect::MemberDev(member));
 
                 dev_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
 
@@ -308,7 +311,9 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                                     .or_insert_with(BTreeMap::default)
                                     .insert((Ty::Dev, dep), ws_feats.clone());
 
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
+                                let new_dep =
+                                    fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
+                                dfs.move_to(new_dep);
 
                                 trace!("Performing one more dev iteration on {member:?}");
                                 continue 'dev_dependency;
