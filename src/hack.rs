@@ -285,6 +285,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                 debug!("No dev dependencies for {member:?}, skipping");
                 continue;
             }
+            continue;
 
             let mut dfs = Dfs::new(&fg.features, member_ix);
             let mut dev_feats = BTreeMap::new();
