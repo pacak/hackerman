@@ -1,5 +1,6 @@
 use anyhow::Context;
 use cargo_hackerman::{
+    explain::explain,
     hack::hack,
     mergetool,
     opts::{self, Action},
@@ -49,6 +50,7 @@ fn main() -> anyhow::Result<()> {
             // regenerate Cargo.lock file
             profile.exec()?;
         }
+
         Action::Restore { profile, single } => {
             start_subscriber(profile.verbosity);
             let mut changed = false;
@@ -69,6 +71,7 @@ fn main() -> anyhow::Result<()> {
                 profile.exec()?;
             }
         }
+
         Action::Check { profile } => {
             let metadata = profile.exec()?;
             let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
@@ -82,6 +85,7 @@ fn main() -> anyhow::Result<()> {
             let cfgs = get_cfgs()?;
             hack(true, false, &metadata, triplets, cfgs)?;
         }
+
         Action::MergeDriver {
             base,
             local,
@@ -89,6 +93,23 @@ fn main() -> anyhow::Result<()> {
             result,
         } => {
             mergetool::merge(&base, &local, &remote, &result)?;
+        }
+
+        Action::Explain {
+            profile,
+            krate,
+            feature,
+            version,
+        } => {
+            use cargo_hackerman::feat_graph::FeatGraph;
+            let metadata = profile.exec()?;
+            let platform = target_spec::Platform::current()?;
+            let triplets = vec![platform.triple_str()];
+            let cfgs = get_cfgs()?;
+            let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
+            fg.optimize()?;
+
+            explain(&mut fg, &krate)?;
         }
     }
     Ok(())

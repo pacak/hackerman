@@ -1,3 +1,66 @@
+use crate::feat_graph::FeatGraph;
+use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
+use std::collections::BTreeSet;
+
+pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()> {
+    let mut packages = fg
+        .packages_by_name(krate)
+        .into_iter()
+        .map(|p| fg[p])
+        .collect::<Vec<_>>();
+    fg.focus_targets = Some(packages.iter().copied().collect::<BTreeSet<_>>());
+
+    let first = packages
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("{krate} is not in use"))?;
+
+    let g = Reversed(&fg.features);
+
+    let mut dfs = Dfs::new(&g, first);
+
+    let mut nodes = BTreeSet::new();
+    let mut edges = BTreeSet::new();
+
+    loop {
+        while let Some(node) = dfs.next(&g) {
+            if node == fg.root {
+                continue;
+            }
+            for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
+                if edge.target() != fg.root {
+                    edges.insert(edge.id());
+                }
+            }
+            nodes.insert(node);
+        }
+        if let Some(next) = packages.pop() {
+            dfs.move_to(next)
+        } else {
+            break;
+        }
+    }
+
+    fg.focus_nodes = Some(nodes);
+    fg.focus_edges = Some(edges);
+
+    #[cfg(feature = "spawn_xdot")]
+    {
+        let mut file = tempfile::NamedTempFile::new()?;
+        dot::render(fg, &mut file)?;
+        std::process::Command::new("xdot")
+            .args([file.path()])
+            .output()?;
+    }
+
+    #[cfg(not(feature = "spawn_xdot"))]
+    {
+        dot::render(&graph, &mut std::io::stdout())?;
+    }
+
+    Ok(())
+}
+
+/*
 use crate::query::{packages_by_name_and_version, Place, Walker};
 use crate::resolve_package;
 use guppy::graph::feature::{FeatureGraph, FeatureId};
@@ -115,3 +178,4 @@ pub fn feature_ids(
 
     Ok(())
 }
+*/

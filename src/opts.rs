@@ -47,21 +47,20 @@ pub enum Action {
         #[bpaf(positional("RESULT"))]
         result: PathBuf,
     },
-    /*
-        #[bpaf(command)]
-        /// Explain why some dependency is present. Both feature and version are optional
-        Explain {
-            #[bpaf(external(profile))]
-            profile: Profile,
 
-            #[bpaf(positional("CRATE"))]
-            krate: String,
-            #[bpaf(external(feature_if))]
-            feature: Option<String>,
-            #[bpaf(external(version_if))]
-            version: Option<String>,
-        },
-    */
+    #[bpaf(command)]
+    /// Explain why some dependency is present. Both feature and version are optional
+    Explain {
+        #[bpaf(external(profile))]
+        profile: Profile,
+
+        #[bpaf(positional("CRATE"))]
+        krate: String,
+        #[bpaf(external(feature_if))]
+        feature: Option<String>,
+        #[bpaf(external(version_if))]
+        version: Option<String>,
+    },
     /*
 
         /// Lists all the duplicates in the workspace

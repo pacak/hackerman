@@ -6,6 +6,7 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Index;
 use tracing::{debug, error, info, trace};
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
@@ -103,6 +104,18 @@ pub struct FeatGraph<'a> {
     pub platforms: Vec<&'a str>,
     pub cfgs: Vec<Cfg>,
     pub triggers: BTreeMap<Pid<'a>, Vec<Trigger<'a>>>,
+
+    pub focus_nodes: Option<BTreeSet<NodeIndex>>,
+    pub focus_edges: Option<BTreeSet<EdgeIndex>>,
+    pub focus_targets: Option<BTreeSet<NodeIndex>>,
+}
+
+impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
+    type Output = NodeIndex;
+
+    fn index(&self, index: Pid<'a>) -> &Self::Output {
+        &self.fid_cache[&index.root()]
+    }
 }
 
 #[derive(Debug)]
@@ -163,6 +176,9 @@ impl<'a> FeatGraph<'a> {
             cache,
             meta,
             cfgs,
+            focus_nodes: None,
+            focus_edges: None,
+            focus_targets: None,
         };
 
         for (ix, package) in meta.packages.iter().enumerate() {
@@ -180,6 +196,8 @@ impl<'a> FeatGraph<'a> {
 
         info!("Optimization pass: transitive reduction");
         self.transitive_reduction()?;
+
+        self.rebuild_cache()?;
         Ok(())
     }
 
@@ -412,6 +430,16 @@ impl<'a> FeatGraph<'a> {
         }
         Ok(b)
     }
+
+    pub fn packages_by_name(&self, name: &str) -> Vec<Pid> {
+        self.meta
+            .packages
+            .iter()
+            .filter(|p| p.name == name)
+            .filter_map(|p| self.cache.get(&p.id))
+            .copied()
+            .collect::<Vec<_>>()
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -523,13 +551,19 @@ pub enum Feat<'a> {
     Named(&'a str),
 }
 
-impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
+impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     fn nodes(&'a self) -> dot::Nodes<'a, NodeIndex> {
-        Cow::from(self.features.node_indices().collect::<Vec<_>>())
+        Cow::from(match &self.focus_nodes {
+            Some(f) => f.iter().copied().collect::<Vec<_>>(),
+            None => self.features.node_indices().collect::<Vec<_>>(),
+        })
     }
 
     fn edges(&'a self) -> dot::Edges<'a, EdgeIndex> {
-        Cow::from(self.features.edge_indices().collect::<Vec<_>>())
+        Cow::from(match &self.focus_edges {
+            Some(f) => f.iter().copied().collect::<Vec<_>>(),
+            None => self.features.edge_indices().collect::<Vec<_>>(),
+        })
     }
 
     fn source(&'a self, edge: &EdgeIndex) -> NodeIndex {
@@ -541,7 +575,7 @@ impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
     }
 }
 
-impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
+impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     fn graph_id(&'a self) -> dot::Id<'a> {
         dot::Id::new("graphname").unwrap()
     }
@@ -594,8 +628,11 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
         }
     }
 
-    fn node_color(&'a self, _node: &NodeIndex) -> Option<dot::LabelText<'a>> {
-        None
+    fn node_color(&'a self, node: &NodeIndex) -> Option<dot::LabelText<'a>> {
+        self.focus_targets
+            .as_ref()?
+            .contains(node)
+            .then(|| dot::LabelText::LabelStr("pink".into()))
     }
 
     fn edge_end_arrow(&'a self, _e: &EdgeIndex) -> dot::Arrow {
@@ -630,7 +667,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for &FeatGraph<'a> {
 pub fn dump(graph: &FeatGraph) -> anyhow::Result<()> {
     use tempfile::NamedTempFile;
     let mut file = NamedTempFile::new()?;
-    dot::render(&graph, &mut file)?;
+    dot::render(graph, &mut file)?;
     std::process::Command::new("xdot")
         .args([file.path()])
         .output()?;
@@ -846,10 +883,3 @@ impl Fid<'_> {
         }
     }
 }
-
-/*
-elakelaiset% cargo tree  -f '{p} {f}' | grep memchr\ v | tail -1                                                                                                                                                                   ~/ej/master
-memchr v2.4.1 default,std,use_std
-elakelaiset% cargo tree  -f '{p} {f}' -p textual | grep memchr\ v | tail -1                                                                                                                                                        ~/ej/master
-memchr v2.4.1 default,std
-*/
