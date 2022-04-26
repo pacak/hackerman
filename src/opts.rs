@@ -1,7 +1,7 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, str::FromStr};
 
 use bpaf::*;
-use cargo_metadata::Metadata;
+use cargo_metadata::{Metadata, Version};
 use tracing::Level;
 
 #[derive(Debug, Clone, Bpaf)]
@@ -59,65 +59,57 @@ pub enum Action {
         #[bpaf(external(feature_if))]
         feature: Option<String>,
         #[bpaf(external(version_if))]
-        version: Option<String>,
+        version: Option<Version>,
     },
+
     /*
+            /// Lists all the duplicates in the workspace
+            #[bpaf(command)]
+            Dupes {
+                #[bpaf(external(profile))]
+                profile: Profile,
+            },
 
-        /// Lists all the duplicates in the workspace
-        #[bpaf(command)]
-        Dupes {
-            #[bpaf(external(profile))]
-            profile: Profile,
-        },
 
-        /// Check if unification is required
-        #[bpaf(command)]
-        Verify {
-            #[bpaf(external(profile))]
-            profile: Profile,
-        },
-
-        /// Workspace tree or crate tree
-        #[bpaf(command)]
-        Tree {
-            #[bpaf(external(profile))]
-            profile: Profile,
-            #[bpaf(positional("CRATE"))]
-            krate: Option<String>,
-            #[bpaf(external(feature_if))]
-            feature: Option<String>,
-            #[bpaf(external(version_if))]
-            version: Option<String>,
-        },
-
-        #[bpaf(command("show"))]
-        /// Show info about a crate
-        ShowCrate {
-            #[bpaf(external(profile))]
-            profile: Profile,
-            #[bpaf(positional("CRATE"))]
-            krate: String,
-            #[bpaf(external(version_if))]
-            version: Option<String>,
-            #[bpaf(external(focus), optional)]
-            focus: Option<Focus>,
-        },
-
+            /// Workspace tree or crate tree
+            #[bpaf(command)]
+            Tree {
+                #[bpaf(external(profile))]
+                profile: Profile,
+                #[bpaf(positional("CRATE"))]
+                krate: Option<String>,
+                #[bpaf(external(feature_if))]
+                feature: Option<String>,
+                #[bpaf(external(version_if))]
+                version: Option<String>,
+            },
     */
+    #[bpaf(command("show"))]
+    /// Show info about a crate
+    ShowCrate {
+        #[bpaf(external(profile))]
+        profile: Profile,
+        #[bpaf(positional("CRATE"))]
+        krate: String,
+        #[bpaf(external(version_if))]
+        version: Option<Version>,
+        #[bpaf(external(focus), fallback(Focus::Manifest))]
+        focus: Focus,
+    },
 }
 
 fn feature_if() -> Parser<Option<String>> {
     positional_if("FEATURE", |v| !is_version(v))
 }
 
-fn version_if() -> Parser<Option<String>> {
-    positional_if("VERSION", is_version)
+fn version_if() -> Parser<Option<Version>> {
+    positional_if("VERSION", is_version).map(|s| s.map(|v| Version::from_str(&v).unwrap()))
 }
 
 #[derive(Debug, Clone, Bpaf)]
 pub struct Profile {
     #[bpaf(argument_os("PATH"), fallback(profile_fallback()))]
-    /// Path to Cargo.toml file, defaults to one in current directory
+    /// Path to Cargo.toml file, defaults to one in the current directory
     pub manifest_path: PathBuf,
 
     /// Require Cargo.lock and cache are up to date

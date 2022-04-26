@@ -111,6 +111,63 @@ fn main() -> anyhow::Result<()> {
 
             explain(&mut fg, &krate)?;
         }
+        Action::ShowCrate {
+            profile,
+            krate,
+            version,
+            focus,
+        } => {
+            let metadata = profile.exec()?;
+            let version = version.map(|v| v.to_string());
+            let package = metadata
+                .packages
+                .iter()
+                .find(|p| {
+                    p.name == krate
+                        && version
+                            .as_ref()
+                            .map_or(true, |v| &p.version.to_string() == v)
+                })
+                .ok_or_else(|| anyhow::anyhow!("{krate} {version:?} is not used"))?;
+
+            match focus {
+                opts::Focus::Manifest => {
+                    let path = &package.manifest_path;
+                    let orig = path.with_extension("toml.orig");
+                    let manifest = if orig.exists() {
+                        std::fs::read_to_string(&orig)?
+                    } else {
+                        std::fs::read_to_string(&path)?
+                    };
+                    println!("{manifest}");
+                    return Ok(());
+                }
+                opts::Focus::Readme => {
+                    if let Some(readme) = &package.readme {
+                        println!("{}", std::fs::read_to_string(&readme)?);
+                    } else {
+                        anyhow::bail!("Package {krate} v{} defines no readme", package.version);
+                    }
+                }
+                opts::Focus::Documentation => {
+                    // intentionally ignoring documentation field to avoid serde shenanigans
+                    let url = format!(
+                        "https://docs.rs/{}/{}/{}",
+                        package.name, package.version, package.name
+                    );
+
+                    use std::process::*;
+                    if cfg!(target_os = "linux") {
+                        Command::new("xdg-open").arg(url).output()?;
+                    } else if cfg!(target_os = "windows") {
+                        Command::new("start").arg(url).output()?;
+                    } else {
+                        todo!("How do you open {url} on this OS?");
+                    }
+                    return Ok(());
+                }
+            }
+        }
     }
     Ok(())
 }
