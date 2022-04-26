@@ -13,28 +13,27 @@ use petgraph::{
         Walker,
     },
 };
-use std::{
-    borrow::BorrowMut,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace, warn};
 
-fn force_lock(lock: &mut bool, meta: &serde_json::Value) -> Option<()> {
-    *lock = meta.get("hackerman")?.get("lock")?.as_bool()?;
+fn force_config(var: &mut bool, name: &str, meta: &serde_json::Value) -> Option<()> {
+    *var = meta.get("hackerman")?.get(name)?.as_bool()?;
     Some(())
 }
 
 pub fn hack(
     dry: bool,
     mut lock: bool,
+    mut no_dev: bool,
     meta: &Metadata,
     triplets: Vec<&str>,
     cfgs: Vec<Cfg>,
 ) -> anyhow::Result<()> {
-    force_lock(&mut lock, &meta.workspace_metadata);
+    force_config(&mut lock, "lock", &meta.workspace_metadata);
+    force_config(&mut no_dev, "no-dev", &meta.workspace_metadata);
 
     let mut fg = FeatGraph::init(meta, triplets, cfgs)?;
-    let changeset = get_changeset(&mut fg)?;
+    let changeset = get_changeset(&mut fg, no_dev)?;
     let has_changes = !changeset.is_empty();
 
     if dry {
@@ -167,7 +166,7 @@ impl std::fmt::Display for Ty {
     }
 }
 
-pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'a>> {
+pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result<FeatChanges<'a>> {
     info!("==== Calculating changeset for hack");
 
     //    dump(fg)?;
@@ -285,9 +284,12 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                 break;
             }
 
+            if no_dev {
+                continue;
+            }
+
             // at this point dep_feats contains all the normal features used by {member}.
             // we'll use it to filter dep dependencies if any.
-
             if !member
                 .package()
                 .dependencies

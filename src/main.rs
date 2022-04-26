@@ -43,13 +43,18 @@ fn get_cfgs() -> anyhow::Result<Vec<Cfg>> {
 
 fn main() -> anyhow::Result<()> {
     match opts::action().run() {
-        Action::Hack { profile, dry, lock } => {
+        Action::Hack {
+            profile,
+            dry,
+            lock,
+            no_dev,
+        } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
             let platform = target_spec::Platform::current()?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(dry, lock, &metadata, triplets, cfgs)?;
+            hack(dry, lock, no_dev, &metadata, triplets, cfgs)?;
             // regenerate Cargo.lock file
             profile.exec()?;
         }
@@ -75,7 +80,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Action::Check { profile } => {
+        Action::Check { profile, no_dev } => {
             let metadata = profile.exec()?;
             let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
             for package in &metadata.packages {
@@ -86,7 +91,7 @@ fn main() -> anyhow::Result<()> {
             let platform = target_spec::Platform::current()?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(true, false, &metadata, triplets, cfgs)?;
+            hack(true, false, no_dev, &metadata, triplets, cfgs)?;
         }
 
         Action::MergeDriver {

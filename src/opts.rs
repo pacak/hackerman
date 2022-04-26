@@ -16,6 +16,8 @@ pub enum Action {
         dry: bool,
         /// Include dependencies checksum into stash
         lock: bool,
+        /// Don't unify dev dependencies
+        no_dev: bool,
     },
 
     /// Remove crate dependency unification added by the 'hack' command
@@ -33,6 +35,8 @@ pub enum Action {
     Check {
         #[bpaf(external(profile))]
         profile: Profile,
+        /// Don't unify dev dependencies
+        no_dev: bool,
     },
 
     /// Restore files and merge with the default merge driver
