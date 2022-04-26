@@ -87,7 +87,7 @@ pub struct FeatGraph<'a> {
     /// root node, should be 0
     pub root: NodeIndex,
     /// set of workspace members
-    workspace_members: BTreeSet<Pid<'a>>,
+    pub workspace_members: BTreeSet<Pid<'a>>,
     /// a dependency graph between features
     /// Feature = Fid + decoration if it's external, internal or root
     pub features: Graph<Feature<'a>, Link>,

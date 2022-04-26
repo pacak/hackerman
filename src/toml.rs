@@ -140,10 +140,20 @@ fn apply_change<'a>(
     if !change.feats.contains("default") {
         new.insert("default-features", Value::from(false));
     }
-    let existing = to
-        .insert(&change.name, value(new))
-        .unwrap_or_else(|| value(false));
-    (&change.name, existing)
+
+    let old = if change.rename {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        Hash::hash(&change.source, &mut hasher);
+        let hash = Hasher::finish(&hasher);
+        let custom_name = format!("hackerman-{}-{}", &change.name, hash);
+        new.insert("package", Value::from(&change.name));
+        to.insert(&custom_name, value(new))
+    } else {
+        to.insert(&change.name, value(new))
+    };
+
+    (&change.name, old.unwrap_or_else(|| value(false)))
 }
 
 fn set_dependencies_toml(

@@ -1,5 +1,5 @@
 use crate::{
-    feat_graph::{FeatTarget, Fid, Pid},
+    feat_graph::{FeatTarget, Pid},
     hack::Ty,
 };
 use cargo_metadata::{camino::Utf8PathBuf, Source, Version};
@@ -73,8 +73,14 @@ mod tests {
 }
 
 impl ChangePackage {
-    pub fn make(importer: Pid, importee: Fid, ty: Ty, mut feats: BTreeSet<String>) -> Self {
-        let package = importee.pid.package();
+    pub fn make(
+        importer: Pid,
+        importee: Pid,
+        ty: Ty,
+        rename: bool,
+        mut feats: BTreeSet<String>,
+    ) -> Self {
+        let package = importee.package();
         optimize_feats(&package.features, &mut feats);
         if let Some(src) = &package.source {
             if src.is_crates_io() {
@@ -83,6 +89,7 @@ impl ChangePackage {
                     ty,
                     source: PackageSource::Registry(package.version.clone()),
                     feats,
+                    rename,
                 }
             } else if src.to_string().starts_with("path+file:") {
                 todo!("path import");
@@ -95,12 +102,12 @@ impl ChangePackage {
                 );
             }
         } else {
-            let source = match relative_import_dir(importer, importee.pid) {
+            let source = match relative_import_dir(importer, importee) {
                 Some(path) => PackageSource::File { path },
                 None => {
-                    let manifest = &importee.pid.package().manifest_path;
+                    let manifest = &importee.package().manifest_path;
                     debug!(
-                        "Using absolute manifest path for {}: {}",
+                        "Using absolute manifest path for {:?}: {}",
                         importee, manifest
                     );
                     PackageSource::File {
@@ -116,6 +123,7 @@ impl ChangePackage {
                 ty,
                 source,
                 feats,
+                rename,
             }
         }
     }
@@ -133,6 +141,7 @@ pub struct ChangePackage {
     pub ty: Ty,
     pub source: PackageSource,
     pub feats: BTreeSet<String>,
+    pub rename: bool,
 }
 
 impl PackageSource {
@@ -149,7 +158,7 @@ impl PackageSource {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 #[allow(clippy::module_name_repetitions)]
 pub enum PackageSource {
     Registry(Version),
@@ -167,7 +176,7 @@ impl std::fmt::Display for PackageSource {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub enum GitVersion {
     Branch(String),
     Tag(String),

@@ -1,5 +1,5 @@
 use crate::{
-    feat_graph::{Feat, FeatGraph, Fid, Pid},
+    feat_graph::{Feat, FeatGraph, Pid},
     metadata::DepKindInfo,
     source::*,
     toml::set_dependencies,
@@ -13,7 +13,10 @@ use petgraph::{
         Walker,
     },
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    borrow::BorrowMut,
+    collections::{BTreeMap, BTreeSet},
+};
 use tracing::{debug, info, trace, warn};
 
 fn force_lock(lock: &mut bool, meta: &serde_json::Value) -> Option<()> {
@@ -43,15 +46,15 @@ pub fn hack(
         }
     }
 
-    for (pid, changes) in changeset.into_iter() {
+    for (member, changes) in changeset.into_iter() {
         let mut changeset = changes
             .into_iter()
-            .map(|(fid, ty, feats)| ChangePackage::make(pid, fid, ty, feats))
+            .map(|(dep, ty, rename, feats)| ChangePackage::make(member, dep, ty, rename, feats))
             .collect::<Vec<_>>();
 
         if dry {
             changeset.sort_by(|a, b| a.name.cmp(&b.name));
-            let path = &pid.package().manifest_path;
+            let path = &member.package().manifest_path;
             println!("{path}");
             for change in changeset {
                 let t = match change.ty {
@@ -64,7 +67,7 @@ pub fn hack(
                 )
             }
         } else {
-            let path = &pid.package().manifest_path;
+            let path = &member.package().manifest_path;
             set_dependencies(path, lock, &changeset)?;
         }
     }
@@ -76,7 +79,7 @@ pub fn hack(
     Ok(())
 }
 
-type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<(Fid<'a>, Ty, BTreeSet<String>)>>;
+type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<(Pid<'a>, Ty, bool, BTreeSet<String>)>>;
 type DetachedDepTree = BTreeMap<NodeIndex, BTreeSet<NodeIndex>>;
 
 fn show_detached_dep_tree(tree: &DetachedDepTree, fg: &FeatGraph) -> &'static str {
@@ -153,6 +156,15 @@ fn collect_features_from<M>(
 pub enum Ty {
     Dev,
     Norm,
+}
+
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Dev => f.write_str("dev"),
+            Ty::Norm => f.write_str("norm"),
+        }
+    }
 }
 
 pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'a>> {
@@ -285,7 +297,6 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                 debug!("No dev dependencies for {member:?}, skipping");
                 continue;
             }
-            continue;
 
             let mut dfs = Dfs::new(&fg.features, member_ix);
             let mut dev_feats = BTreeMap::new();
@@ -382,13 +393,52 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         }
     }
 
+    // renames are needed when there's several dependencies from a member with the same name.
+    // there can be one, two or three of them.
+    let mut renames = BTreeMap::new();
+    for package in fg.workspace_members.iter() {
+        use std::cell::RefCell;
+        let mut deps = BTreeMap::new();
+        let cell = RefCell::new(&mut deps);
+        let package_index = match fg.fid_cache.get(&package.root()) {
+            Some(ix) => ix,
+            None => continue,
+        };
+        let g = EdgeFiltered::from_fn(&fg.features, |edge| {
+            if fg.features[edge.target()].pid() == Some(*package) {
+                true
+            } else {
+                if let Some(dep) = fg.features[edge.target()].pid() {
+                    let dep = dep.package();
+                    cell.borrow_mut()
+                        .entry(dep.name.clone())
+                        .or_insert_with(BTreeSet::new)
+                        .insert(dep.version.to_string());
+                }
+                false
+            }
+        });
+
+        let mut dfs = Dfs::new(&g, *package_index);
+        // go home clippy, you're drunk
+        #[allow(clippy::redundant_pattern_matching)]
+        while let Some(_) = dfs.next(&g) {}
+        deps.retain(|_key, val| val.len() > 1);
+        for (dep, _versions) in deps {
+            renames
+                .entry(*package)
+                .or_insert_with(BTreeSet::new)
+                .insert(dep);
+        }
+    }
+
     Ok(changed
         .into_iter()
         .map(|(pid, deps)| {
             let feats = deps
                 .into_iter()
-                .filter_map(|((ty, pid), feats)| {
-                    let package = fg.features[pid].fid()?;
+                .filter_map(|((ty, dep_pid), feats)| {
+                    let package = fg.features[dep_pid].fid()?.pid;
                     let feats = feats
                         .iter()
                         .filter_map(|f| match fg.features[*f].fid().unwrap().dep {
@@ -396,7 +446,11 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                             Feat::Named(name) => Some(name.to_string()),
                         })
                         .collect::<BTreeSet<_>>();
-                    Some((package, ty, feats))
+
+                    let rename_needed = renames
+                        .get(&pid)
+                        .map_or(false, |names| names.contains(&package.package().name));
+                    Some((package, ty, rename_needed, feats))
                 })
                 .collect::<Vec<_>>();
             (pid, feats)
