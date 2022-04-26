@@ -62,15 +62,14 @@ pub enum Action {
         version: Option<Version>,
     },
 
+    /// Lists all the duplicates in the workspace
+    #[bpaf(command)]
+    Dupes {
+        #[bpaf(external(profile))]
+        profile: Profile,
+    },
+
     /*
-            /// Lists all the duplicates in the workspace
-            #[bpaf(command)]
-            Dupes {
-                #[bpaf(external(profile))]
-                profile: Profile,
-            },
-
-
             /// Workspace tree or crate tree
             #[bpaf(command)]
             Tree {

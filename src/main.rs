@@ -8,7 +8,10 @@ use cargo_hackerman::{
 };
 use cargo_metadata::camino::Utf8PathBuf;
 use cargo_platform::Cfg;
-use std::{collections::BTreeSet, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -166,6 +169,31 @@ fn main() -> anyhow::Result<()> {
                     }
                     return Ok(());
                 }
+            }
+        }
+        Action::Dupes { profile } => {
+            let mut any = false;
+            let metadata = profile.exec()?;
+            let mut packages = BTreeMap::new();
+            for p in &metadata.packages {
+                packages
+                    .entry(p.name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(p)
+            }
+            for (name, copies) in packages.iter() {
+                if copies.len() < 2 {
+                    continue;
+                }
+                any = true;
+                print!("{name}:");
+                for c in copies {
+                    print!(" {}", c.version)
+                }
+                println!();
+            }
+            if !any {
+                println!("All packages are present in one version only");
             }
         }
     }
