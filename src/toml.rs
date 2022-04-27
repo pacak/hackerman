@@ -125,7 +125,7 @@ fn apply_change<'a>(
     change: &'a ChangePackage,
     changed: &mut bool,
     to: &mut Table,
-) -> (&'a str, Item) {
+) -> (String, Item) {
     let mut new = InlineTable::new();
     *changed = true;
     change.source.insert_into(&mut new);
@@ -141,19 +141,21 @@ fn apply_change<'a>(
         new.insert("default-features", Value::from(false));
     }
 
+    let new_name;
     let old = if change.rename {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Hash::hash(&change.source, &mut hasher);
         let hash = Hasher::finish(&hasher);
-        let custom_name = format!("hackerman-{}-{}", &change.name, hash);
+        new_name = format!("hackerman-{}-{}", &change.name, hash);
         new.insert("package", Value::from(&change.name));
-        to.insert(&custom_name, value(new))
+        to.insert(&new_name, value(new))
     } else {
-        to.insert(&change.name, value(new))
+        new_name = change.name.clone();
+        to.insert(&new_name, value(new))
     };
 
-    (&change.name, old.unwrap_or_else(|| value(false)))
+    (new_name, old.unwrap_or_else(|| value(false)))
 }
 
 fn set_dependencies_toml(
@@ -195,13 +197,13 @@ fn set_dependencies_toml(
     let stash = get_table(toml, NORM_STASH_PATH)?;
     stash.set_position(998);
     for (name, val) in norm_saved {
-        stash.insert(name, val);
+        stash.insert(&name, val);
     }
 
     let dev_stash = get_table(toml, DEV_STASH_PATH)?;
     dev_stash.set_position(999);
     for (name, val) in dev_saved {
-        dev_stash.insert(name, val);
+        dev_stash.insert(&name, val);
     }
     if changed {
         add_banner(toml)?;
