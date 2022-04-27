@@ -1,5 +1,5 @@
 use crate::feat_graph::FeatGraph;
-use petgraph::visit::{Dfs, EdgeRef, IntoEdgesDirected, Reversed};
+use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
@@ -15,7 +15,9 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
         .pop()
         .ok_or_else(|| anyhow::anyhow!("{krate} is not in use"))?;
 
-    let g = Reversed(&fg.features);
+    let g = EdgeFiltered::from_fn(Reversed(&fg.features), |e| {
+        !fg.features[e.source()].is_workspace()
+    });
 
     let mut dfs = Dfs::new(&g, first);
 
