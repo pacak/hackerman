@@ -621,19 +621,31 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
         dot::Id::new(format!("n{}", n.index())).unwrap()
     }
 
-    fn node_shape(&'a self, _node: &NodeIndex) -> Option<dot::LabelText<'a>> {
-        None
+    fn node_shape(&'a self, node: &NodeIndex) -> Option<dot::LabelText<'a>> {
+        let fid = self.features[*node].fid()?;
+        match fid.dep {
+            Feat::Base => Some(dot::LabelText::label("octagon")),
+            Feat::Named(_) => None,
+        }
     }
 
     fn node_label(&'a self, n: &NodeIndex) -> dot::LabelText<'a> {
         let mut fmt = String::new();
         match self.features[*n].fid() {
             Some(fid) => {
-                let pid = fid.pid;
-                let graph = pid.1;
-                let pkt = &graph.packages[pid.0];
-                fmt.push_str(&pkt.name);
-                fmt.push_str(&format!(" {}", pkt.version));
+                let package = fid.pid.package();
+                fmt.push_str(&package.name);
+
+                match package.source.as_ref() {
+                    Some(src) => {
+                        if src.repr.starts_with("git") {
+                            fmt.push_str(" git");
+                        } else {
+                            fmt.push_str(&format!(" {}", package.version));
+                        }
+                    }
+                    None => {}
+                }
                 match fid.dep {
                     Feat::Base => {}
                     Feat::Named(name) => {
