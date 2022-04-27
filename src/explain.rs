@@ -7,7 +7,7 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
     let mut packages = fg
         .packages_by_name(krate)
         .into_iter()
-        .map(|p| fg[p])
+        .flat_map(|p| fg.fid_cache.get(&p.root()).copied())
         .collect::<Vec<_>>();
     fg.focus_targets = Some(packages.iter().copied().collect::<BTreeSet<_>>());
 

@@ -204,6 +204,7 @@ impl<'a> FeatGraph<'a> {
     pub fn rebuild_cache(&mut self) -> anyhow::Result<()> {
         info!("Rebuilding feature id cache");
         self.fids.clear();
+        self.fid_cache.clear();
         for node in self.features.node_indices() {
             if let Some(fid) = self.features[node].fid() {
                 self.fids.insert(fid, node);
