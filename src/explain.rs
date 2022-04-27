@@ -1,15 +1,44 @@
 use crate::{feat_graph::FeatGraph, hack::Collect};
+use cargo_metadata::Version;
 use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
-pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()> {
+pub fn explain<'a>(
+    fg: &'a mut FeatGraph<'a>,
+    krate: &str,
+    feature: Option<&String>,
+    version: Option<&Version>,
+) -> anyhow::Result<()> {
     fg.shrink_to_target()?;
     let mut packages = fg
-        .packages_by_name(krate)
-        .into_iter()
-        .flat_map(|p| fg.fid_cache.get(&p.root()).copied())
+        .features
+        .node_indices()
+        .filter(|ix| {
+            if let Some(fid) = fg.features[*ix].fid() {
+                let package = fid.pid.package();
+                if package.name != krate {
+                    return false;
+                }
+                if let Some(feat) = feature {
+                    if fid.pid.named(feat) != fid {
+                        return false;
+                    }
+                } else if fid.pid.root() != fid {
+                    return false;
+                }
+                if let Some(ver) = version {
+                    if package.version != *ver {
+                        return false;
+                    }
+                }
+                true
+            } else {
+                false
+            }
+        })
         .collect::<Vec<_>>();
+
     fg.focus_targets = Some(packages.iter().copied().collect::<BTreeSet<_>>());
 
     let first = packages

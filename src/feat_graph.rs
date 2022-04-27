@@ -467,16 +467,6 @@ impl<'a> FeatGraph<'a> {
         }
         Ok(b)
     }
-
-    pub fn packages_by_name(&self, name: &str) -> Vec<Pid> {
-        self.meta
-            .packages
-            .iter()
-            .filter(|p| p.name == name)
-            .filter_map(|p| self.cache.get(&p.id))
-            .copied()
-            .collect::<Vec<_>>()
-    }
 }
 
 #[derive(Copy, Clone)]

@@ -118,7 +118,7 @@ fn main() -> anyhow::Result<()> {
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
             fg.optimize()?;
 
-            explain(&mut fg, &krate)?;
+            explain(&mut fg, &krate, feature.as_ref(), version.as_ref())?;
         }
         Action::ShowCrate {
             profile,
