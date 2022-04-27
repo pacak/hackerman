@@ -1,8 +1,10 @@
+use crate::hack::Collect;
 use crate::metadata::*;
 use cargo_metadata::{Metadata, Package, PackageId, Source};
 use cargo_platform::Cfg;
 use dot::{GraphWalk, Labeller};
 use petgraph::graph::{EdgeIndex, NodeIndex};
+use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef};
 use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -139,6 +141,27 @@ impl<'a> FeatGraph<'a> {
                 self.features.add_node(Feature::External(fid))
             }
         })
+    }
+
+    pub fn shrink_to_target(&mut self) -> anyhow::Result<()> {
+        let g = EdgeFiltered::from_fn(&self.features, |e| {
+            e.weight().satisfies(
+                self.features[e.source()],
+                Collect::Target,
+                &self.platforms,
+                &self.cfgs,
+            )
+        });
+        let mut dfs = Dfs::new(&g, self.root);
+        let mut this = BTreeSet::new();
+        while let Some(ix) = dfs.next(&g) {
+            this.insert(ix);
+        }
+
+        self.features.retain_nodes(|_, ix| this.contains(&ix));
+        self.rebuild_cache()?;
+
+        Ok(())
     }
 
     pub fn init(

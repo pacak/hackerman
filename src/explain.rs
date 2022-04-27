@@ -1,9 +1,10 @@
-use crate::feat_graph::FeatGraph;
+use crate::{feat_graph::FeatGraph, hack::Collect};
 use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
 pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()> {
+    fg.shrink_to_target()?;
     let mut packages = fg
         .packages_by_name(krate)
         .into_iter()
@@ -17,6 +18,12 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
 
     let g = EdgeFiltered::from_fn(Reversed(&fg.features), |e| {
         !fg.features[e.source()].is_workspace()
+            && e.weight().satisfies(
+                fg.features[e.source()],
+                Collect::Target,
+                &fg.platforms,
+                &fg.cfgs,
+            )
     });
 
     let mut dfs = Dfs::new(&g, first);
@@ -45,6 +52,7 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
     }
 
     info!("Done traversing");
+
     fg.focus_nodes = Some(nodes);
     fg.focus_edges = Some(edges);
 
