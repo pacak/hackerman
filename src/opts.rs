@@ -58,6 +58,14 @@ pub enum Action {
         #[bpaf(external(profile))]
         profile: Profile,
 
+        /// Don't strip redundant links
+        #[bpaf(short('T'), long)]
+        no_transitive_opt: bool,
+
+        /// Use package nodes instead of feature nodes
+        #[bpaf(short('P'), long)]
+        package_nodes: bool,
+
         #[bpaf(positional("CRATE"))]
         krate: String,
         #[bpaf(external(feature_if))]

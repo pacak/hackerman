@@ -213,12 +213,14 @@ impl<'a> FeatGraph<'a> {
         Ok(graph)
     }
 
-    pub fn optimize(&mut self) -> anyhow::Result<()> {
+    pub fn optimize(&mut self, no_transitive: bool) -> anyhow::Result<()> {
         info!("Optimization pass: trim unused features");
         self.trim_unused_features()?;
 
-        info!("Optimization pass: transitive reduction");
-        self.transitive_reduction()?;
+        if !no_transitive {
+            info!("Optimization pass: transitive reduction");
+            self.transitive_reduction()?;
+        }
 
         self.rebuild_cache()?;
         Ok(())

@@ -108,6 +108,8 @@ fn main() -> anyhow::Result<()> {
             krate,
             feature,
             version,
+            no_transitive_opt,
+            package_nodes,
         } => {
             start_subscriber(profile.verbosity);
             use cargo_hackerman::feat_graph::FeatGraph;
@@ -116,9 +118,15 @@ fn main() -> anyhow::Result<()> {
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
-            fg.optimize()?;
+            fg.optimize(no_transitive_opt)?;
 
-            explain(&mut fg, &krate, feature.as_ref(), version.as_ref())?;
+            explain(
+                &mut fg,
+                &krate,
+                feature.as_ref(),
+                version.as_ref(),
+                package_nodes,
+            )?;
         }
         Action::ShowCrate {
             profile,
