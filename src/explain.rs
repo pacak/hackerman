@@ -1,6 +1,7 @@
 use crate::feat_graph::FeatGraph;
 use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
 use std::collections::BTreeSet;
+use tracing::{debug, info};
 
 pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()> {
     let mut packages = fg
@@ -21,6 +22,7 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
     let mut nodes = BTreeSet::new();
     let mut edges = BTreeSet::new();
 
+    debug!("Collecting dependencies");
     loop {
         while let Some(node) = dfs.next(&g) {
             if node == fg.root {
@@ -40,6 +42,7 @@ pub fn explain<'a>(fg: &'a mut FeatGraph<'a>, krate: &str) -> anyhow::Result<()>
         }
     }
 
+    info!("Done traversing");
     fg.focus_nodes = Some(nodes);
     fg.focus_edges = Some(edges);
 

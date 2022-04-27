@@ -109,6 +109,7 @@ fn main() -> anyhow::Result<()> {
             feature,
             version,
         } => {
+            start_subscriber(profile.verbosity);
             use cargo_hackerman::feat_graph::FeatGraph;
             let metadata = profile.exec()?;
             let platform = target_spec::Platform::current()?;
