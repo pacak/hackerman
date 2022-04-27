@@ -1,5 +1,5 @@
 use crate::feat_graph::FeatGraph;
-use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed};
+use petgraph::visit::{Dfs, EdgeRef, IntoEdgesDirected, Reversed};
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 

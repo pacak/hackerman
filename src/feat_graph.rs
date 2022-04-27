@@ -1,5 +1,5 @@
 use crate::metadata::*;
-use cargo_metadata::{Metadata, Package, PackageId};
+use cargo_metadata::{Metadata, Package, PackageId, Source};
 use cargo_platform::Cfg;
 use dot::{GraphWalk, Labeller};
 use petgraph::graph::{EdgeIndex, NodeIndex};
@@ -294,11 +294,24 @@ impl<'a> FeatGraph<'a> {
                 continue;
             }
 
+            let source_matches = |a: Option<&Source>, b: Option<&String>| match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => {
+                    if &a.repr == b || (a.repr.starts_with("git") && a.repr.starts_with(b)) {
+                        true
+                    } else {
+                        trace!("ignoring a candidate {package:?} for {dep:?} due to source mismatch: {a:?} != {b:?}");
+                        false
+                    }
+                }
+                _ => false,
+            };
             // get resolved package - should be there in at most one matching copy...
-            let resolved = match packages
-                .iter()
-                .find(|p| p.name == dep.name && dep.req.matches(&p.version))
-            {
+            let resolved = match packages.iter().find(|p| {
+                p.name == dep.name
+                    && dep.req.matches(&p.version)
+                    && source_matches(p.source.as_ref(), dep.source.as_ref())
+            }) {
                 Some(res) => res,
                 None => {
                     debug!(
