@@ -143,6 +143,13 @@ impl<'a> FeatGraph<'a> {
         })
     }
 
+    /// for any node find node for the base of this package
+    pub fn base_node(&self, node: NodeIndex) -> Option<NodeIndex> {
+        self.fid_cache
+            .get(&self.features[node].fid()?.base())
+            .copied()
+    }
+
     pub fn shrink_to_target(&mut self) -> anyhow::Result<()> {
         let g = EdgeFiltered::from_fn(&self.features, |e| {
             e.weight().satisfies(

@@ -87,24 +87,17 @@ pub fn explain<'a>(
             if node == fg.root {
                 continue;
             }
-
-            let this_node;
-            if package_nodes {
-                let base = fg.features[node].fid().unwrap().base();
-                this_node = *fg.fid_cache.get(&base).unwrap();
-                nodes.insert(this_node);
+            let this_node = if package_nodes {
+                fg.base_node(node).unwrap()
             } else {
-                this_node = node;
-                nodes.insert(node);
-            }
+                node
+            };
+            nodes.insert(this_node);
             for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
-                if edge.target() != fg.root {
-                    if package_nodes {
-                        let other_node = fg.features[edge.target()].fid().unwrap().base();
-                        new_edges.insert((other_node, this_node));
-                    } else {
-                        edges.insert(edge.id());
-                    }
+                if package_nodes {
+                    new_edges.insert((fg.base_node(edge.target()).unwrap(), this_node));
+                } else {
+                    edges.insert(edge.id());
                 }
             }
         }
