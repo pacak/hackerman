@@ -151,10 +151,11 @@ impl<'a> FeatGraph<'a> {
     }
 
     pub fn shrink_to_target(&mut self) -> anyhow::Result<()> {
+        info!("Shrinking to current target");
         let g = EdgeFiltered::from_fn(&self.features, |e| {
             e.weight().satisfies(
                 self.features[e.source()],
-                Collect::Target,
+                Collect::DevTarget,
                 &self.platforms,
                 &self.cfgs,
             )

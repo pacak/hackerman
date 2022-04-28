@@ -60,29 +60,25 @@ pub fn explain<'a>(
     } else {
         fg.focus_targets = Some(packages.iter().copied().collect::<BTreeSet<_>>());
     }
-
-    let first = packages
-        .pop()
-        .ok_or_else(|| anyhow::anyhow!("{krate} is not in use"))?;
-
     let g = EdgeFiltered::from_fn(Reversed(&fg.features), |e| {
         !fg.features[e.source()].is_workspace()
             && e.weight().satisfies(
-                fg.features[e.source()],
-                Collect::Target,
+                fg.features[e.target()],
+                Collect::DevTarget,
                 &fg.platforms,
                 &fg.cfgs,
             )
     });
 
-    let mut dfs = Dfs::new(&g, first);
+    let mut dfs = Dfs::new(&g, fg.root);
 
     let mut nodes = BTreeSet::new();
     let mut edges = BTreeSet::new();
     let mut new_edges = BTreeSet::new();
 
     debug!("Collecting dependencies");
-    loop {
+    while let Some(next) = packages.pop() {
+        dfs.move_to(next);
         while let Some(node) = dfs.next(&g) {
             if node == fg.root {
                 continue;
@@ -100,11 +96,6 @@ pub fn explain<'a>(
                     edges.insert(edge.id());
                 }
             }
-        }
-        if let Some(next) = packages.pop() {
-            dfs.move_to(next)
-        } else {
-            break;
         }
     }
 

@@ -1,10 +1,7 @@
 use cargo_metadata::Dependency;
 use cargo_platform::Cfg;
 
-use crate::{
-    feat_graph::{Feature, Fid},
-    hack::Collect,
-};
+use crate::{feat_graph::Feature, hack::Collect};
 
 #[derive(Eq, PartialEq, Clone, Debug, Copy, Hash, PartialOrd, Ord)]
 /// Dependencies can come in three kinds
@@ -55,7 +52,7 @@ impl DepKindInfo {
     ) -> bool {
         if self.kind == DependencyKind::Development {
             match filter {
-                Collect::All | Collect::Target | Collect::NoDev => return false,
+                Collect::AllTargets | Collect::Target | Collect::NoDev => return false,
                 Collect::MemberDev(pid) => {
                     if let Some(this_fid) = source.fid() {
                         {
@@ -65,18 +62,17 @@ impl DepKindInfo {
                         }
                     }
                 }
+                Collect::DevTarget => {
+                    if !source.is_workspace() {
+                        return false;
+                    }
+                }
             };
         }
 
-        let r = self
-            .target
+        self.target
             .as_ref()
-            .map_or(true, |p| p.matches(platforms[0], cfgs));
-
-        //        if self.target.is_some() {
-        //            println!(",,{r:?}: {:?} - {:?}", self, platforms);
-        //        }
-        r
+            .map_or(true, |p| p.matches(platforms[0], cfgs))
     }
 }
 

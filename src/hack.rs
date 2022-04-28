@@ -103,10 +103,12 @@ fn show_detached_dep_tree(tree: &DetachedDepTree, fg: &FeatGraph) -> &'static st
 
 #[derive(Debug, Clone, Copy)]
 pub enum Collect<'a> {
-    /// all targets, normal and builds - from everywhere, dev - workspace only
-    All,
-    /// current target only, else same as all
+    /// all targets, normal and builds
+    AllTargets,
+    /// current target only
     Target,
+    /// current target only, normal and build dependencies globally, dev dependencies for workspace
+    DevTarget,
     NoDev,
     MemberDev(Pid<'a>),
 }
@@ -114,8 +116,8 @@ pub enum Collect<'a> {
 impl<'a> Collect<'a> {
     pub fn is_all(&self) -> bool {
         match self {
-            Collect::All => true,
-            Collect::Target | Collect::NoDev | Collect::MemberDev(_) => false,
+            Collect::AllTargets => true,
+            Collect::Target | Collect::DevTarget | Collect::NoDev | Collect::MemberDev(_) => false,
         }
     }
 }
@@ -135,11 +137,10 @@ fn collect_features_from<M>(
     M: VisitMap<NodeIndex>,
 {
     let g = EdgeFiltered::from_fn(&fg.features, |e| match filter {
-        Collect::All => true,
-        Collect::Target | Collect::NoDev | Collect::MemberDev(_) => {
-            e.weight()
-                .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs)
-        }
+        Collect::AllTargets => true,
+        Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
+            .weight()
+            .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
     });
 
     while let Some(ix) = dfs.next(&g) {
@@ -183,7 +184,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             &mut Dfs::new(&fg.features, fg.root),
             fg,
             &mut raw_workspace_feats,
-            Collect::All,
+            Collect::AllTargets,
         );
 
         // For reasons unknown cargo resolves dependencies for all the targets including those
