@@ -1,6 +1,5 @@
 use crate::{
     feat_graph::{FeatGraph, HasIndex},
-    hack::Collect,
     metadata::{DepKindInfo, Link},
 };
 use cargo_metadata::Version;
@@ -19,26 +18,15 @@ pub fn explain<'a>(
     let mut packages = fg
         .features
         .node_indices()
-        .filter(|ix| {
-            if let Some(fid) = fg.features[*ix].fid() {
+        .filter(|&ix| {
+            if let Some(fid) = fg.features[ix].fid() {
                 let package = fid.pid.package();
-                if package.name != krate {
-                    return false;
-                }
-                if let Some(feat) = feature {
-                    if fid.pid.named(feat) != fid {
-                        return false;
-                    }
-                }
-                if fid.pid.root() != fid && fid.pid.base() != fid {
-                    return false;
-                }
-                if let Some(ver) = version {
-                    if package.version != *ver {
-                        return false;
-                    }
-                }
-                true
+                // name must match.
+                // feature must match if given, otherwise look for base
+                // version must match if given
+                package.name == krate
+                    && feature.map_or(fid.pid.base() == fid, |f| fid.pid.named(f) == fid)
+                    && version.map_or(true, |v| package.version == *v)
             } else {
                 false
             }
@@ -51,10 +39,7 @@ pub fn explain<'a>(
         fg.focus_targets = Some(
             packages
                 .iter()
-                .map(|ix| {
-                    let base = fg.features[*ix].fid().unwrap().base();
-                    *fg.fid_cache.get(&base).unwrap()
-                })
+                .flat_map(|&ix| fg.base_node(ix))
                 .collect::<BTreeSet<_>>(),
         );
     } else {
@@ -62,12 +47,6 @@ pub fn explain<'a>(
     }
     let g = EdgeFiltered::from_fn(Reversed(&fg.features), |e| {
         !fg.features[e.source()].is_workspace()
-            && e.weight().satisfies(
-                fg.features[e.target()],
-                Collect::DevTarget,
-                &fg.platforms,
-                &fg.cfgs,
-            )
     });
 
     let mut dfs = Dfs::new(&g, fg.root);
@@ -80,9 +59,6 @@ pub fn explain<'a>(
     while let Some(next) = packages.pop() {
         dfs.move_to(next);
         while let Some(node) = dfs.next(&g) {
-            if node == fg.root {
-                continue;
-            }
             let this_node = if package_nodes {
                 fg.base_node(node).unwrap()
             } else {
@@ -102,14 +78,13 @@ pub fn explain<'a>(
     if package_nodes {
         for (a, b) in new_edges {
             let a = a.get_index(fg)?;
-            if a == b {
-                continue;
+            if a != b {
+                let link = Link {
+                    optional: false,
+                    kinds: vec![DepKindInfo::NORMAL],
+                };
+                edges.insert(fg.features.add_edge(a, b, link));
             }
-            let link = Link {
-                optional: false,
-                kinds: vec![DepKindInfo::NORMAL],
-            };
-            edges.insert(fg.features.add_edge(a, b, link));
         }
     }
 
