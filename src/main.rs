@@ -1,6 +1,7 @@
 use anyhow::Context;
 use cargo_hackerman::{
     explain::explain,
+    feat_graph::FeatGraph,
     hack::hack,
     mergetool,
     opts::{self, Action},
@@ -188,21 +189,30 @@ fn main() -> anyhow::Result<()> {
         Action::Dupes { profile } => {
             let mut any = false;
             let metadata = profile.exec()?;
+            let platform = target_spec::Platform::current()?;
+            let triplets = vec![platform.triple_str()];
+            let cfgs = get_cfgs()?;
+            let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
+            fg.shrink_to_target()?;
+
             let mut packages = BTreeMap::new();
-            for p in &metadata.packages {
-                packages
-                    .entry(p.name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(p)
+            for fid in fg.features.node_weights().flat_map(|f| f.fid()) {
+                if fid == fid.base() {
+                    let p = fid.pid.package();
+                    packages
+                        .entry(p.name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(p.clone());
+                }
             }
-            for (name, copies) in packages.iter() {
+            for (name, copies) in &packages {
                 if copies.len() < 2 {
                     continue;
                 }
                 any = true;
                 print!("{name}:");
                 for c in copies {
-                    print!(" {}", c.version)
+                    print!(" {}", c.version);
                 }
                 println!();
             }
