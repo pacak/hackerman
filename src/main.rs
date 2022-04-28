@@ -1,6 +1,6 @@
 use anyhow::Context;
 use cargo_hackerman::{
-    explain::explain,
+    explain::{explain, tree},
     feat_graph::FeatGraph,
     hack::hack,
     mergetool,
@@ -103,6 +103,33 @@ fn main() -> anyhow::Result<()> {
         } => {
             mergetool::merge(&base, &local, &remote, &result)?;
         }
+        Action::Tree {
+            profile,
+            no_transitive_opt,
+            package_nodes,
+            workspace,
+            krate,
+            feature,
+            version,
+            no_dev,
+        } => {
+            start_subscriber(profile.verbosity);
+            let metadata = profile.exec()?;
+            let platform = target_spec::Platform::current()?;
+            let triplets = vec![platform.triple_str()];
+            let cfgs = get_cfgs()?;
+            let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
+            fg.optimize(no_transitive_opt)?;
+            tree(
+                &mut fg,
+                &krate,
+                feature.as_ref(),
+                version.as_ref(),
+                package_nodes,
+                workspace,
+                no_dev,
+            )?;
+        }
 
         Action::Explain {
             profile,
@@ -113,7 +140,6 @@ fn main() -> anyhow::Result<()> {
             package_nodes,
         } => {
             start_subscriber(profile.verbosity);
-            use cargo_hackerman::feat_graph::FeatGraph;
             let metadata = profile.exec()?;
             let platform = target_spec::Platform::current()?;
             let triplets = vec![platform.triple_str()];

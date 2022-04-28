@@ -81,6 +81,36 @@ pub enum Action {
         profile: Profile,
     },
 
+    #[bpaf(command)]
+    /// Make a tree out of dependencies
+    Tree {
+        #[bpaf(external(profile))]
+        profile: Profile,
+
+        /// Don't strip redundant links
+        #[bpaf(short('T'), long)]
+        no_transitive_opt: bool,
+
+        /// Don't include dev dependencies
+        #[bpaf(short('D'), long)]
+        no_dev: bool,
+
+        /// Use package nodes instead of feature nodes
+        #[bpaf(short('P'), long)]
+        package_nodes: bool,
+
+        /// Keep within the workspace
+        #[bpaf(short, long)]
+        workspace: bool,
+
+        #[bpaf(positional("CRATE"))]
+        krate: String,
+        #[bpaf(external(feature_if))]
+        feature: Option<String>,
+        #[bpaf(external(version_if))]
+        version: Option<Version>,
+    },
+
     /*
             /// Workspace tree or crate tree
             #[bpaf(command)]
@@ -201,119 +231,6 @@ pub struct Hack {
 fn is_version(v: &str) -> bool {
     v == "*" || semver::Version::parse(v).is_ok()
 }
-fn explain() -> Parser<Explain> {
-    let krate = positional("CRATE");
-    let feature = positional_if("FEATURE", |v| !is_version(v));
-    let version = positional_if("VERSION", is_version);
-    construct!(Explain {
-        krate,
-        feature,
-        version,
-    })
-}
-
-fn explain_cmd() -> Parser<Command> {
-    let msg = "Explain why a certain crate or a feature is included in the workspace";
-    let info = Info::default()
-        .descr(msg)
-        .footer(include_str!("../doc/explain.md"))
-        .for_parser(explain());
-
-    command("explain", Some(msg), info).map(Command::Explain)
-}
-
-fn show_cmd() -> Parser<Command> {
-    let msg = "Show information about a package";
-    let package = positional("PACKAGE");
-    let version = positional("VERSION")
-        .guard(
-            |s| semver::Version::parse(s).is_ok(),
-            "A valid version required",
-        )
-        .optional();
-    let show_manifest = short('m')
-        .long("manifest")
-        .help("Show manifest")
-        .req_flag(Focus::Manifest);
-    let show_readme = short('r')
-        .long("readme")
-        .help("Show readme")
-        .req_flag(Focus::Readme);
-    let show_doc = short('d')
-        .long("doc")
-        .help("Open documentation URL")
-        .req_flag(Focus::Documentation);
-    let focus = show_manifest
-        .or_else(show_readme)
-        .or_else(show_doc)
-        .optional();
-    use Command::ShowPackage;
-    let info = Info::default()
-        .descr(msg)
-        .for_parser(construct!(ShowPackage(package, version, focus)));
-    command("show", Some(msg), info)
-}
-
-fn hack_cmd() -> Parser<Command> {
-    let msg = "Unify crate dependencies across individual crates in the workspace";
-    let dry = dry_run();
-    let lock = short('l')
-        .long("lock")
-        .help("Include dependencies checksum into stash")
-        .switch();
-    let info = Info::default()
-        .descr(msg)
-        .footer(include_str!("../doc/hack.md"))
-        .for_parser(construct!(Hack { dry, lock }));
-    command("hack", Some(msg), info).map(Command::Hack)
-}
-
-fn restore_cmd() -> Parser<Command> {
-    let file = positional_os("FILE").optional();
-
-    let info = Info::default()
-        .descr("Remove crate dependency unification added by the 'hack' command")
-        .for_parser(file.map(Command::Restore));
-    command("restore", Some("Remove unification"), info)
-}
-
-fn verify_cmd() -> Parser<Command> {
-    let info = Info::default()
-        .descr("Check if unification is required and other invariants")
-        .for_parser(Parser::pure(()));
-    command(
-        "check",
-        Some("Check for unification and other issues"),
-        info,
-    )
-    .map(|_| Command::Verify)
-}
-
-fn duplicates_cmd() -> Parser<Command> {
-    let descr = "Lists all the duplicates in the workspace";
-    let info = Info::default().descr(descr).for_parser(Parser::pure(()));
-    command("dupes", Some(descr), info).map(|_| Command::Duplicates)
-}
-
-fn tree_cmd() -> Parser<Command> {
-    let descr = "Display crates dependencies as a tree";
-
-    let package = positional("CRATE").optional();
-    let feature = positional_if("FEATURE", |v| !is_version(v));
-    let version = positional("VERSION").optional().guard(
-        |x| x.is_none() || semver::Version::parse(x.as_ref().unwrap()).is_ok(),
-        "You need to specify a valid semver compatible version",
-    );
-    let p = construct!(package, feature, version);
-    let info = Info::default()
-        .descr(descr)
-        .footer(include_str!("../doc/tree.md"))
-        .for_parser(p);
-    command("tree", Some(descr), info).map(|args| match args {
-        (Some(p), feat, ver) => Command::PackageTree(p, feat, ver),
-        (None, _, _) => Command::WorkspaceTree,
-    })
-}
 
 fn verbosity() -> Parser<Level> {
     short('v')
@@ -326,35 +243,4 @@ fn verbosity() -> Parser<Level> {
             2 => Level::DEBUG,
             _ => Level::TRACE,
         })
-}
-
-fn dry_run() -> Parser<bool> {
-    short('d')
-        .long("dry")
-        .help("report actions to be performed without actually performing them")
-        .switch()
-}
-
-fn custom_manifest() -> Parser<OsString> {
-    long("manifest-path")
-        .help("Path to Cargo.toml")
-        .argument_os("PATH")
-        .fallback("Cargo.toml".into())
-}
-
-// For reasons (?) cargo doesn't replace the command line used so we need to put a command inside a
-// command.
-fn options() -> OptionParser<(Level, OsString, Command)> {
-    let v = verbosity();
-    let cmd = construct!([
-        explain_cmd(),
-        hack_cmd(),
-        restore_cmd(),
-        duplicates_cmd(),
-        verify_cmd(),
-        tree_cmd(),
-        show_cmd()
-    ]);
-    let opts = construct!(v, custom_manifest(), cmd);
-    Info::default().for_parser(cargo_helper("hackerman", opts))
 }
