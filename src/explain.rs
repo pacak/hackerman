@@ -29,7 +29,8 @@ pub fn explain<'a>(
                     if fid.pid.named(feat) != fid {
                         return false;
                     }
-                } else if fid.pid.root() != fid {
+                }
+                if fid.pid.root() != fid && fid.pid.base() != fid {
                     return false;
                 }
                 if let Some(ver) = version {
@@ -43,6 +44,8 @@ pub fn explain<'a>(
             }
         })
         .collect::<Vec<_>>();
+
+    info!("Found {} matching package(s)", packages.len());
 
     if package_nodes {
         fg.focus_targets = Some(

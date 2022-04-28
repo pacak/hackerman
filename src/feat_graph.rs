@@ -353,7 +353,10 @@ impl<'a> FeatGraph<'a> {
             // - optional dependencies are linked from named feature
             // - requred dependenceis are linked fromb base
             let this = if dep.optional {
-                this.named(&dep.name).get_index(self)?
+                match dep.rename.as_ref() {
+                    Some(name) => this.named(name).get_index(self)?,
+                    None => this.named(&dep.name).get_index(self)?,
+                }
             } else {
                 base_ix
             };
