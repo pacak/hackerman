@@ -104,7 +104,7 @@ pub enum Action {
         workspace: bool,
 
         #[bpaf(positional("CRATE"))]
-        krate: String,
+        krate: Option<String>,
         #[bpaf(external(feature_if))]
         feature: Option<String>,
         #[bpaf(external(version_if))]

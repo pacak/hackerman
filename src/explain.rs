@@ -37,7 +37,7 @@ fn collect_packages(
 
 pub fn tree<'a>(
     fg: &'a mut FeatGraph<'a>,
-    krate: &str,
+    krate: Option<&String>,
     feature: Option<&String>,
     version: Option<&Version>,
     package_nodes: bool,
@@ -45,7 +45,17 @@ pub fn tree<'a>(
     no_dev: bool,
 ) -> anyhow::Result<()> {
     fg.shrink_to_target()?;
-    let mut packages = collect_packages(fg, krate, feature, version);
+
+    let mut packages = match krate {
+        Some(krate) => collect_packages(fg, krate, feature, version),
+        None => {
+            let members = fg.workspace_members.clone();
+            members
+                .iter()
+                .map(|f| fg.fid_index(f.base()))
+                .collect::<Vec<_>>()
+        }
+    };
 
     info!("Found {} matching package(s)", packages.len());
 

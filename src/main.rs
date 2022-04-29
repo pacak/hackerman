@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
             fg.optimize(no_transitive_opt)?;
             tree(
                 &mut fg,
-                &krate,
+                krate.as_ref(),
                 feature.as_ref(),
                 version.as_ref(),
                 package_nodes,
