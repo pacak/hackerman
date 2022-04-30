@@ -206,7 +206,12 @@ fn main() -> anyhow::Result<()> {
                     } else if cfg!(target_os = "windows") {
                         Command::new("start").arg(url).output()?;
                     } else {
-                        todo!("How do you open {url} on this OS?");
+                        #[cfg(feature = "webbroser")]
+                        {
+                            webbrowser::open(url)?;
+                            return Ok(());
+                        }
+                        println!("{url}");
                     }
                     return Ok(());
                 }
