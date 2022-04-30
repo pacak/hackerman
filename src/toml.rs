@@ -117,7 +117,7 @@ fn get_checksum(toml: &Document) -> anyhow::Result<i64> {
 
     // keep numbers positive
     Ok(i64::try_from(
-        Hasher::finish(&hasher) % 8000000000000000000,
+        Hasher::finish(&hasher) % 8_000_000_000_000_000_000,
     )?)
 }
 

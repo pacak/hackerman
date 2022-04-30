@@ -1,3 +1,5 @@
+#![allow(clippy::similar_names)]
+
 use crate::{
     feat_graph::{Feat, FeatGraph, Pid},
     metadata::DepKindInfo,
@@ -40,9 +42,8 @@ pub fn hack(
         if changeset.is_empty() {
             println!("Features are unified as is");
             return Ok(());
-        } else {
-            println!("Hackerman would like to set those features for following packets:");
         }
+        println!("Hackerman would like to set those features for following packets:");
     }
 
     for (member, changes) in changeset {
@@ -208,9 +209,9 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                 if let Some(pid) = fg.features[member].pid() {
                     if seen.contains(&pid) {
                         continue;
-                    } else {
-                        seen.insert(pid);
                     }
+                    seen.insert(pid);
+
                     let package = pid.package();
                     let fid = if package.features.contains_key("default") {
                         pid.named("default")
@@ -376,11 +377,10 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
 
         if weak_deps.is_empty() {
             break;
-        } else {
-            debug!("Weak dependencies add {} new links", weak_deps.len());
-            for (a, b) in weak_deps {
-                fg.add_edge(a, b, false, DepKindInfo::NORMAL)?;
-            }
+        }
+        debug!("Weak dependencies add {} new links", weak_deps.len());
+        for (a, b) in weak_deps {
+            fg.add_edge(a, b, false, DepKindInfo::NORMAL)?;
         }
     }
 

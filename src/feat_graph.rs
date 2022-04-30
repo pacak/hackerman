@@ -222,6 +222,7 @@ impl<'a> FeatGraph<'a> {
     }
 
     fn transitive_reduction(&mut self) {
+        use petgraph::algo::tred::dag_to_toposorted_adjacency_list;
         let graph = &mut self.features;
         let before = graph.edge_count();
         let toposort = match petgraph::algo::toposort(&*graph, None) {
@@ -232,7 +233,6 @@ impl<'a> FeatGraph<'a> {
             }
         };
 
-        use petgraph::algo::tred::dag_to_toposorted_adjacency_list;
         let (adj_list, revmap) =
             dag_to_toposorted_adjacency_list::<_, NodeIndex>(&*graph, &toposort);
         let (reduction, _closure) =
@@ -720,8 +720,7 @@ impl<'a> HasIndex<'a> for (&'a Package, &'a str) {
             .cache
             .get(package_id)
             .ok_or_else(|| anyhow::anyhow!("No cached value for {package_id:?}"))?;
-        let fid = pid.named(feat);
-        fid.get_index(graph)
+        pid.named(feat).get_index(graph)
     }
 }
 

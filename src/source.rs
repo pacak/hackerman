@@ -73,6 +73,7 @@ mod tests {
 }
 
 impl ChangePackage {
+    #[allow(clippy::similar_names)]
     pub fn make(
         importer: Pid,
         importee: Pid,
@@ -129,6 +130,7 @@ impl ChangePackage {
     }
 }
 
+#[allow(clippy::similar_names)]
 fn relative_import_dir(importer: Pid, importee: Pid) -> Option<Utf8PathBuf> {
     let importer_dir = &importer.package().manifest_path.parent()?;
     let importee_dir = &importee.package().manifest_path.parent()?;
