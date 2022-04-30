@@ -133,7 +133,7 @@ fn collect_features_from<M>(
 
     while let Some(ix) = dfs.next(&g) {
         if let Some(fid) = fg.features[ix].fid() {
-            if let Some(parent) = fg.fid_cache.get(&fid.base()) {
+            if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
                 to.entry(*parent).or_insert_with(BTreeSet::new).insert(ix);
             }
         }

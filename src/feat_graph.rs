@@ -1,5 +1,5 @@
 use crate::hack::Collect;
-use crate::metadata::*;
+use crate::metadata::{DepKindInfo, Link};
 use cargo_metadata::{Metadata, Package, PackageId, Source};
 use cargo_platform::Cfg;
 use dot::{GraphWalk, Labeller};
@@ -13,8 +13,6 @@ use tracing::{debug, error, info, trace};
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
 /// An node for feature graph
-///
-/// contains information about platforms, package_id and a feature
 pub enum Feature<'a> {
     /// "root" node, contains links to all the workspace
     Root,
@@ -34,7 +32,7 @@ impl std::fmt::Display for Feature<'_> {
 }
 
 impl<'a> Feature<'a> {
-    pub fn fid(&self) -> Option<Fid<'a>> {
+    pub const fn fid(&self) -> Option<Fid<'a>> {
         match self {
             Feature::Root => None,
             Feature::Workspace(fid) | Feature::External(fid) => Some(*fid),
@@ -50,37 +48,10 @@ impl<'a> Feature<'a> {
         Some(&meta.packages[pid].id)
     }
 
-    pub fn is_workspace(&self) -> bool {
+    pub const fn is_workspace(&self) -> bool {
         match self {
             Feature::Root | Feature::Workspace(_) => true,
             Feature::External(_) => false,
-        }
-    }
-
-    pub fn is_root(&self) -> bool {
-        match self {
-            Feature::Root => true,
-            Feature::Workspace(_) | Feature::External(_) => false,
-        }
-    }
-
-    pub fn is_named(&self) -> bool {
-        match self {
-            Feature::Root => false,
-            Feature::Workspace(f) | Feature::External(f) => f.is_named(),
-        }
-    }
-    pub fn is_base(&self) -> bool {
-        match self {
-            Feature::Root => false,
-            Feature::Workspace(f) | Feature::External(f) => !f.is_named(),
-        }
-    }
-
-    pub fn get_external(&self) -> Option<Fid> {
-        match self {
-            Feature::External(f) => Some(*f),
-            Feature::Root | Feature::Workspace(_) => None,
         }
     }
 }
@@ -146,7 +117,7 @@ impl<'a> FeatGraph<'a> {
     /// for any node find node for the base of this package
     pub fn base_node(&self, node: NodeIndex) -> Option<NodeIndex> {
         self.fid_cache
-            .get(&self.features[node].fid()?.base())
+            .get(&self.features[node].fid()?.get_base())
             .copied()
     }
 
@@ -195,7 +166,7 @@ impl<'a> FeatGraph<'a> {
             workspace_members: meta
                 .workspace_members
                 .iter()
-                .flat_map(|pid| cache.get(pid))
+                .filter_map(|pid| cache.get(pid))
                 .copied()
                 .collect::<BTreeSet<_>>(),
             features,
@@ -223,11 +194,11 @@ impl<'a> FeatGraph<'a> {
 
     pub fn optimize(&mut self, no_transitive: bool) -> anyhow::Result<()> {
         info!("Optimization pass: trim unused features");
-        self.trim_unused_features()?;
+        self.trim_unused_features();
 
         if !no_transitive {
             info!("Optimization pass: transitive reduction");
-            self.transitive_reduction()?;
+            self.transitive_reduction();
         }
 
         self.rebuild_cache()?;
@@ -250,14 +221,14 @@ impl<'a> FeatGraph<'a> {
         Ok(())
     }
 
-    fn transitive_reduction(&mut self) -> anyhow::Result<()> {
+    fn transitive_reduction(&mut self) {
         let graph = &mut self.features;
         let before = graph.edge_count();
         let toposort = match petgraph::algo::toposort(&*graph, None) {
             Ok(t) => t,
             Err(err) => {
                 error!("Cyclic dependencies are detected {err:?}, skipping transitive reduction");
-                return Ok(());
+                return;
             }
         };
 
@@ -276,10 +247,12 @@ impl<'a> FeatGraph<'a> {
         });
         let after = graph.edge_count();
         debug!("Transitive reduction, edges {before} -> {after}");
-        Ok(())
     }
 
-    fn trim_unused_features(&mut self) -> anyhow::Result<()> {
+    /// Remove features not used by the workspace directly or indirectly
+    ///
+    /// should only be used for displaying
+    fn trim_unused_features(&mut self) {
         let mut to_remove = Vec::new();
         loop {
             for f in self.features.externals(petgraph::EdgeDirection::Incoming) {
@@ -294,12 +267,6 @@ impl<'a> FeatGraph<'a> {
                 self.features.remove_node(f);
             }
         }
-        Ok(())
-    }
-
-    pub fn resolve_package_index(&self, ix: PackageIndex) -> Pid<'a> {
-        let package = &self.meta.packages[ix.0];
-        *self.cache.get(&package.id).unwrap()
     }
 
     fn add_package(
@@ -369,34 +336,29 @@ impl<'a> FeatGraph<'a> {
                 base_ix
             };
 
-            let remote;
-
             //  dependencies that have default target are linked to that target
             //  otherwise dependencies are linked to
-            if dep.uses_default_features {
-                remote = Some(self.add_edge(this, resolved, false, dep.into())?);
+            let remote = if dep.uses_default_features {
+                Some(self.add_edge(this, resolved, false, dep.into())?)
             } else if let Some(pid) = self.cache.get(&resolved.id) {
                 let fid = pid.base();
-                remote = Some(self.add_edge(this, fid, false, dep.into())?);
+                Some(self.add_edge(this, fid, false, dep.into())?)
             } else {
-                remote = None;
-            }
+                None
+            };
             // if additional features on dependency are required - we add them all
             for feat in &dep.features {
                 self.add_edge(this, (resolved, feat.as_str()), false, dep.into())?;
             }
 
+            // for remote dependencies we store the resolved ifo in order to deal with renames
             if let Some(remote) = remote {
-                deps.insert(
-                    dep.rename
-                        .as_ref()
-                        .map_or_else(|| resolved.name.clone(), |r| r.clone()),
-                    (resolved, dep, remote),
-                );
+                let name = dep.rename.clone().unwrap_or_else(|| resolved.name.clone());
+                deps.insert(name, (resolved, dep, remote));
             }
         }
 
-        for (this_feat, feat_deps) in package.features.iter() {
+        for (this_feat, feat_deps) in &package.features {
             let feat_ix = self.fid_index(this.named(this_feat));
             self.add_edge(feat_ix, base_ix, false, DepKindInfo::NORMAL)?;
 
@@ -493,19 +455,7 @@ impl Pid<'_> {
     pub fn package_id(&self) -> &cargo_metadata::PackageId {
         &self.1.packages[self.0].id
     }
-
-    pub fn package_index(&self) -> PackageIndex {
-        PackageIndex(self.0)
-    }
 }
-
-// refers to a single package
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-pub struct PackageIndex(usize);
-
-// refers to a single feature
-#[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
-pub struct FeatureIndex(NodeIndex);
 
 impl<'a> Pid<'a> {
     pub fn root(self) -> Fid<'a> {
@@ -516,13 +466,13 @@ impl<'a> Pid<'a> {
         }
     }
 
-    pub fn base(self) -> Fid<'a> {
+    pub const fn base(self) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Base,
         }
     }
-    pub fn named(self, name: &'a str) -> Fid<'a> {
+    pub const fn named(self, name: &'a str) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Named(name),
@@ -775,50 +725,6 @@ impl<'a> HasIndex<'a> for (&'a Package, &'a str) {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct Platforms(usize);
-
-impl Platforms {
-    pub fn iter(&self) -> PlatformIterator {
-        PlatformIterator(self.0)
-    }
-
-    pub fn new(count: usize) -> Self {
-        assert!(count < 64, "At most 64 unification platforms are supported");
-        Platforms((1 << count) - 1)
-    }
-
-    pub fn clear(&mut self, ix: usize) {
-        self.0 ^= 1 << ix;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0 == 0
-    }
-}
-
-impl std::ops::BitOrAssign for Platforms {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0
-    }
-}
-
-pub struct PlatformIterator(usize);
-
-impl Iterator for PlatformIterator {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.0 == 0 {
-            return None;
-        }
-        let lz = self.0.trailing_zeros() as usize;
-        self.0 ^= 1 << lz;
-
-        Some(lz as usize)
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum FeatTarget<'a> {
     Named { name: &'a str },
@@ -922,17 +828,8 @@ mod test {
 }
 impl Fid<'_> {
     #[must_use]
-    /// Check if the feature is named
-    const fn is_named(&self) -> bool {
-        match self.dep {
-            Feat::Base => false,
-            Feat::Named(_) => true,
-        }
-    }
-
-    #[must_use]
     /// Create a base feature from possibly named one
-    pub const fn base(&self) -> Self {
+    pub const fn get_base(&self) -> Self {
         Self {
             dep: Feat::Base,
             ..*self

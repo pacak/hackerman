@@ -162,7 +162,7 @@ fn set_dependencies_toml(
     lock: bool,
     changes: &[ChangePackage],
 ) -> anyhow::Result<bool> {
-    let mut changed = false;
+    let mut was_modified = false;
 
     // this sets "dependencies" part
     let dependencies = get_table(toml, &["dependencies"])?;
@@ -170,7 +170,7 @@ fn set_dependencies_toml(
     let norm_saved = changes
         .iter()
         .filter(|change| change.ty == Ty::Norm)
-        .map(|change| apply_change(change, &mut changed, dependencies))
+        .map(|change| apply_change(change, &mut was_modified, dependencies))
         .collect::<Vec<_>>();
     dependencies.sort_values();
 
@@ -180,12 +180,12 @@ fn set_dependencies_toml(
     let dev_saved = changes
         .iter()
         .filter(|change| change.ty == Ty::Dev)
-        .map(|change| apply_change(change, &mut changed, dev_dependencies))
+        .map(|change| apply_change(change, &mut was_modified, dev_dependencies))
         .collect::<Vec<_>>();
     dev_dependencies.sort_values();
 
     if lock {
-        changed |= true;
+        was_modified = true;
         let hash = get_checksum(toml)?;
         let lock_table = get_table(toml, LOCK_PATH)?;
         lock_table.insert("dependencies", value(hash));
@@ -204,10 +204,10 @@ fn set_dependencies_toml(
     for (name, val) in dev_saved {
         dev_stash.insert(&name, val);
     }
-    if changed {
+    if was_modified {
         add_banner(toml)?;
     }
-    Ok(changed)
+    Ok(was_modified)
 }
 
 pub fn restore_path(manifest_path: &Path) -> anyhow::Result<bool> {

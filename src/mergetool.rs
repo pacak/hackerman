@@ -1,9 +1,6 @@
-use std::path::Path;
-
-use cargo_metadata::camino::Utf8PathBuf;
-use tempfile::{Builder, NamedTempFile};
-
 use crate::toml::restore;
+use cargo_metadata::camino::Utf8PathBuf;
+use std::path::Path;
 
 fn restore_path(path: &Path) -> anyhow::Result<()> {
     match path.to_str() {

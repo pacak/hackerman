@@ -223,7 +223,7 @@ fn main() -> anyhow::Result<()> {
 
             let mut packages = BTreeMap::new();
             for fid in fg.features.node_weights().filter_map(Feature::fid) {
-                if fid == fid.base() {
+                if fid == fid.get_base() {
                     let p = fid.pid.package();
                     packages
                         .entry(p.name.clone())

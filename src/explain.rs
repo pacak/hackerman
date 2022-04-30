@@ -127,7 +127,7 @@ pub fn explain<'a>(
         fg.focus_targets = Some(
             packages
                 .iter()
-                .flat_map(|&ix| fg.base_node(ix))
+                .filter_map(|&ix| fg.base_node(ix))
                 .collect::<BTreeSet<_>>(),
         );
     } else {
