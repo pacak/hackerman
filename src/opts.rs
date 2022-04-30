@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf, str::FromStr};
 
-use bpaf::*;
+use bpaf::{positional_if, short, Bpaf, Parser};
 use cargo_metadata::{Metadata, Version};
 use tracing::Level;
 
@@ -111,20 +111,6 @@ pub enum Action {
         version: Option<Version>,
     },
 
-    /*
-            /// Workspace tree or crate tree
-            #[bpaf(command)]
-            Tree {
-                #[bpaf(external(profile))]
-                profile: Profile,
-                #[bpaf(positional("CRATE"))]
-                krate: Option<String>,
-                #[bpaf(external(feature_if))]
-                feature: Option<String>,
-                #[bpaf(external(version_if))]
-                version: Option<String>,
-            },
-    */
     #[bpaf(command("show"))]
     /// Show info about a crate
     ShowCrate {
@@ -170,13 +156,13 @@ impl Profile {
 
         let mut extra = Vec::new();
         if self.frozen {
-            extra.push(String::from("--frozen"))
+            extra.push(String::from("--frozen"));
         }
         if self.locked {
-            extra.push(String::from("--locked"))
+            extra.push(String::from("--locked"));
         }
         if self.offline {
-            extra.push(String::from("--offline"))
+            extra.push(String::from("--offline"));
         }
         cmd.manifest_path(&self.manifest_path);
         cmd.other_options(extra);

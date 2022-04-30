@@ -921,14 +921,18 @@ mod test {
     }
 }
 impl Fid<'_> {
-    fn is_named(&self) -> bool {
+    #[must_use]
+    /// Check if the feature is named
+    const fn is_named(&self) -> bool {
         match self.dep {
             Feat::Base => false,
             Feat::Named(_) => true,
         }
     }
 
-    pub fn base(&self) -> Self {
+    #[must_use]
+    /// Create a base feature from possibly named one
+    pub const fn base(&self) -> Self {
         Self {
             dep: Feat::Base,
             ..*self

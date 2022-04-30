@@ -142,18 +142,17 @@ fn apply_change<'a>(
     }
 
     let new_name;
-    let old = if change.rename {
+    if change.rename {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Hash::hash(&change.source, &mut hasher);
         let hash = Hasher::finish(&hasher);
         new_name = format!("hackerman-{}-{}", &change.name, hash);
         new.insert("package", Value::from(&change.name));
-        to.insert(&new_name, value(new))
     } else {
         new_name = change.name.clone();
-        to.insert(&new_name, value(new))
     };
+    let old = to.insert(&new_name, value(new));
 
     (new_name, old.unwrap_or_else(|| value(false)))
 }

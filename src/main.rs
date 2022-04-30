@@ -1,7 +1,7 @@
 use anyhow::Context;
 use cargo_hackerman::{
     explain::{explain, tree},
-    feat_graph::FeatGraph,
+    feat_graph::{FeatGraph, Feature},
     hack::hack,
     mergetool,
     opts::{self, Action},
@@ -194,13 +194,13 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 opts::Focus::Documentation => {
+                    use std::process::Command;
                     // intentionally ignoring documentation field to avoid serde shenanigans
                     let url = format!(
                         "https://docs.rs/{}/{}/{}",
                         package.name, package.version, package.name
                     );
 
-                    use std::process::*;
                     if cfg!(target_os = "linux") {
                         Command::new("xdg-open").arg(url).output()?;
                     } else if cfg!(target_os = "windows") {
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
             fg.shrink_to_target()?;
 
             let mut packages = BTreeMap::new();
-            for fid in fg.features.node_weights().flat_map(|f| f.fid()) {
+            for fid in fg.features.node_weights().filter_map(Feature::fid) {
                 if fid == fid.base() {
                     let p = fid.pid.package();
                     packages

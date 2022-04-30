@@ -1,7 +1,7 @@
 use crate::{
     feat_graph::{Feat, FeatGraph, Pid},
     metadata::DepKindInfo,
-    source::*,
+    source::ChangePackage,
     toml::set_dependencies,
 };
 use cargo_metadata::Metadata;
@@ -45,7 +45,7 @@ pub fn hack(
         }
     }
 
-    for (member, changes) in changeset.into_iter() {
+    for (member, changes) in changeset {
         let mut changeset = changes
             .into_iter()
             .map(|(dep, ty, rename, feats)| ChangePackage::make(member, dep, ty, rename, feats))
@@ -60,10 +60,7 @@ pub fn hack(
                     Ty::Dev => "dev ",
                     Ty::Norm => "",
                 };
-                println!(
-                    "\t{} {}: {}{:?}",
-                    change.name, change.source, t, change.feats
-                )
+                println!("\t{} {}: {t}{:?}", change.name, change.source, change.feats);
             }
         } else {
             let path = &member.package().manifest_path;
@@ -111,15 +108,6 @@ pub enum Collect<'a> {
     DevTarget,
     NoDev,
     MemberDev(Pid<'a>),
-}
-
-impl<'a> Collect<'a> {
-    pub fn is_all(&self) -> bool {
-        match self {
-            Collect::AllTargets => true,
-            Collect::Target | Collect::DevTarget | Collect::NoDev | Collect::MemberDev(_) => false,
-        }
-    }
 }
 
 // we are doing 4 types of passes:
@@ -230,9 +218,9 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                         pid.base()
                     };
                     if let Some(&ix) = fg.fid_cache.get(&fid) {
-                        res.push((pid, ix))
+                        res.push((pid, ix));
                     } else {
-                        warn!("unknown base in workspace: {fid:?}?")
+                        warn!("unknown base in workspace: {fid:?}?");
                     }
                 }
             }
@@ -256,7 +244,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                     show_detached_dep_tree(&deps_feats, fg),
                 );
 
-                for (&dep, feats) in deps_feats.iter() {
+                for (&dep, feats) in &deps_feats {
                     if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
                         if ws_feats != feats {
                             if let Some(&missing_feat) = ws_feats.difference(feats).next() {
@@ -315,7 +303,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                     show_detached_dep_tree(&dev_feats, fg),
                 );
 
-                for (&dep, feats) in dev_feats.iter() {
+                for (&dep, feats) in &dev_feats {
                     if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
                         if ws_feats != feats {
                             if let Some(&missing_feat) = ws_feats.difference(feats).next() {
@@ -346,7 +334,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         // triggers that satisfy the conditions and not enabled yet then add those,
         // remove them from fg and do one more pass
         let mut weak_deps = Vec::new();
-        for (pid, triggers) in fg.triggers.iter_mut() {
+        for (pid, triggers) in &mut fg.triggers {
             let mut local_fids = BTreeSet::new();
 
             let mut remote_pids = BTreeSet::new();
@@ -399,7 +387,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
     // renames are needed when there's several dependencies from a member with the same name.
     // there can be one, two or three of them.
     let mut renames = BTreeMap::new();
-    for package in fg.workspace_members.iter() {
+    for package in &fg.workspace_members {
         use std::cell::RefCell;
         let mut deps = BTreeMap::new();
         let cell = RefCell::new(&mut deps);

@@ -2,7 +2,7 @@ use crate::{
     feat_graph::{FeatTarget, Pid},
     hack::Ty,
 };
-use cargo_metadata::{camino::Utf8PathBuf, Source, Version};
+use cargo_metadata::{camino::Utf8PathBuf, Version};
 use std::collections::{BTreeSet, HashMap};
 use tracing::debug;
 
@@ -15,7 +15,7 @@ fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTree
             }
         }
     }
-    for imp in implicit.iter() {
+    for imp in &implicit {
         requested.remove(*imp);
     }
 }
@@ -166,11 +166,20 @@ pub enum PackageSource {
     File { path: Utf8PathBuf },
 }
 
+impl std::fmt::Display for GitVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GitVersion::Branch(b) => write!(f, "branch: {b}"),
+            GitVersion::Tag(b) => write!(f, "tag: {b}"),
+            GitVersion::Rev(b) => write!(f, "rev: {b}"),
+        }
+    }
+}
 impl std::fmt::Display for PackageSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PackageSource::Registry(ver) => ver.fmt(f),
-            PackageSource::Git { url, ver } => todo!(),
+            PackageSource::Git { url, ver } => write!(f, "{url} {ver}"),
             PackageSource::File { path } => path.fmt(f),
         }
     }
