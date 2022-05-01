@@ -447,12 +447,12 @@ impl<'a> FeatGraph<'a> {
 #[derive(Copy, Clone)]
 pub struct Pid<'a>(usize, &'a Metadata);
 
-impl Pid<'_> {
-    pub fn package(&self) -> &cargo_metadata::Package {
+impl<'a> Pid<'a> {
+    pub fn package(self) -> &'a cargo_metadata::Package {
         &self.1.packages[self.0]
     }
 
-    pub fn package_id(&self) -> &cargo_metadata::PackageId {
+    pub fn package_id(self) -> &'a cargo_metadata::PackageId {
         &self.1.packages[self.0].id
     }
 }

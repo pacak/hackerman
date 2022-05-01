@@ -24,7 +24,7 @@ fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTree
 mod tests {
     use std::collections::{BTreeSet, HashMap};
 
-    use super::optimize_feats;
+    use super::{optimize_feats, PackageSource};
     fn check(req: &[&str], decl: &[(&str, &[&str])], exp: &[&str]) {
         let mut requested = req
             .iter()
@@ -70,13 +70,46 @@ mod tests {
             &["default"],
         );
     }
+
+    const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
+    const GIT_0: &str = "git+https://github.com/rust-lang/cargo.git?branch=main#0227f048";
+    const GIT_1: &str = "git+https://github.com/rust-lang/cargo.git?tag=v0.46.0#0227f048";
+    const GIT_2: &str = "git+https://github.com/rust-lang/cargo.git?rev=0227f048#0227f048";
+    const GIT_3: &str = "git+https://github.com/gyscos/zstd-rs.git#bc874a57";
+
+    #[test]
+    fn parse_sources() -> anyhow::Result<()> {
+        PackageSource::try_from(CRATES_IO)?;
+        PackageSource::try_from(GIT_0)?;
+        PackageSource::try_from(GIT_1)?;
+        PackageSource::try_from(GIT_2)?;
+        PackageSource::try_from(GIT_3)?;
+        Ok(())
+    }
 }
 
-impl ChangePackage {
+impl<'a> TryFrom<&'a str> for PackageSource<'a> {
+    type Error = anyhow::Error;
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        if let Some(registry) = value.strip_prefix("registry+") {
+            Ok(PackageSource::Registry(registry))
+        } else if let Some(repo) = value.strip_prefix("git+") {
+            if let Some((url, _)) = repo.split_once('#') {
+                Ok(PackageSource::Git(url))
+            } else {
+                Ok(PackageSource::Git(repo))
+            }
+        } else {
+            anyhow::bail!("Not sure what package source is {value}");
+        }
+    }
+}
+
+impl<'a> ChangePackage<'a> {
     #[allow(clippy::similar_names)]
     pub fn make(
-        importer: Pid,
-        importee: Pid,
+        importer: Pid<'a>,
+        importee: Pid<'a>,
         ty: Ty,
         rename: bool,
         mut feats: BTreeSet<String>,
@@ -84,24 +117,14 @@ impl ChangePackage {
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
         if let Some(src) = &package.source {
-            if src.is_crates_io() {
-                ChangePackage {
-                    name: package.name.clone(),
-                    ty,
-                    version: package.version.clone(),
-                    source: PackageSource::Registry,
-                    feats,
-                    rename,
-                }
-            } else if src.to_string().starts_with("path+file:") {
-                todo!("path import");
-            } else {
-                todo!(
-                    "{:?}\n{:?}\n{:?}\nSource {src:?} is not supported yet",
-                    importer,
-                    importee,
-                    feats
-                );
+            let source = PackageSource::try_from(src.repr.as_str()).unwrap();
+            ChangePackage {
+                name: package.name.clone(),
+                ty,
+                version: package.version.clone(),
+                source,
+                feats,
+                rename,
             }
         } else {
             let source = match relative_import_dir(importer, importee) {
@@ -140,22 +163,22 @@ fn relative_import_dir(importer: Pid, importee: Pid) -> Option<Utf8PathBuf> {
 }
 
 #[derive(Debug)]
-pub struct ChangePackage {
+pub struct ChangePackage<'a> {
     pub name: String,
     pub ty: Ty,
     pub version: Version,
-    pub source: PackageSource,
+    pub source: PackageSource<'a>,
     pub feats: BTreeSet<String>,
     pub rename: bool,
 }
 
-impl PackageSource {
+impl PackageSource<'_> {
     pub fn insert_into(&self, ver: &Version, table: &mut toml_edit::InlineTable) {
         match self {
-            PackageSource::Registry => {
+            PackageSource::Registry(_) => {
                 table.insert("version", toml_edit::Value::from(ver.to_string()));
             }
-            PackageSource::Git { url: _, ver: _ } => todo!(),
+            PackageSource::Git(_) => todo!(),
             PackageSource::File { path } => {
                 table.insert("path", toml_edit::Value::from(path.to_string()));
             }
@@ -165,34 +188,18 @@ impl PackageSource {
 
 #[derive(Debug, Hash)]
 #[allow(clippy::module_name_repetitions)]
-pub enum PackageSource {
-    Registry,
-    Git { url: String, ver: GitVersion },
+pub enum PackageSource<'a> {
+    Registry(&'a str),
+    Git(&'a str),
     File { path: Utf8PathBuf },
 }
 
-impl std::fmt::Display for GitVersion {
+impl std::fmt::Display for PackageSource<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GitVersion::Branch(b) => write!(f, "branch: {b}"),
-            GitVersion::Tag(b) => write!(f, "tag: {b}"),
-            GitVersion::Rev(b) => write!(f, "rev: {b}"),
-        }
-    }
-}
-impl std::fmt::Display for PackageSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PackageSource::Registry => f.write_str("registry"),
-            PackageSource::Git { url, ver } => write!(f, "{url} {ver}"),
+            PackageSource::Registry(_reg) => f.write_str("registry"),
+            PackageSource::Git(url) => write!(f, "{url}"),
             PackageSource::File { path } => path.fmt(f),
         }
     }
-}
-
-#[derive(Debug, Hash)]
-pub enum GitVersion {
-    Branch(String),
-    Tag(String),
-    Rev(String),
 }
