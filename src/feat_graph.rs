@@ -793,12 +793,6 @@ mod test {
     }
 
     #[test]
-    fn metadata_snapshot_1() -> anyhow::Result<()> {
-        process_fg_with(1, |_| Ok(()))?;
-        Ok(())
-    }
-
-    #[test]
     fn metadata_snapshot_2() -> anyhow::Result<()> {
         process_fg_with(2, |_| Ok(()))?;
         Ok(())
@@ -818,8 +812,8 @@ mod test {
 
     #[test]
     fn metadata_snapshot_5() -> anyhow::Result<()> {
-        process_fg_with(5, |fg| {
-            dump(fg)?;
+        process_fg_with(5, |_fg| {
+            //            dump(fg)?;
 
             Ok(())
         })

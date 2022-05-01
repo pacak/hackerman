@@ -147,6 +147,15 @@ pub enum Ty {
     Norm,
 }
 
+impl Ty {
+    pub fn table_name(&self) -> &'static str {
+        match self {
+            Ty::Dev => "dev-dependencies",
+            Ty::Norm => "dependencies",
+        }
+    }
+}
+
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

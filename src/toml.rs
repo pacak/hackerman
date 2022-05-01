@@ -2,6 +2,8 @@
 
 use anyhow::Context;
 use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
+use std::hash::{Hash, Hasher};
+use std::ops::{Index, IndexMut};
 use std::path::Path;
 use toml_edit::{value, Array, Decor, Document, InlineTable, Item, Table, Value};
 use tracing::{debug, info};
@@ -94,25 +96,43 @@ fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a 
     Ok(table)
 }
 
+fn add_checksum<H: Hasher>(item: &Item, hasher: &mut H) -> anyhow::Result<()> {
+    match item {
+        Item::None => {}
+        Item::Value(value) => Hash::hash(&value.to_string(), hasher),
+        Item::Table(t) => {
+            for (k, v) in t.iter() {
+                Hash::hash(k, hasher);
+                add_checksum(v, hasher)?;
+            }
+        }
+        Item::ArrayOfTables(t) => {
+            for table in t.iter() {
+                for (k, v) in table.iter() {
+                    Hash::hash(k, hasher);
+                    add_checksum(v, hasher)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn get_checksum(toml: &Document) -> anyhow::Result<i64> {
-    use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
-    #[allow(clippy::redundant_pattern_matching)]
-    if let Some(_) = toml.get("target").and_then(Item::as_table) {
-        todo!("target specific checksums are not supported yet");
-    }
+    let t = match toml.as_item() {
+        Item::Table(t) => t,
+        Item::None | Item::Value(_) | Item::ArrayOfTables(_) => anyhow::bail!("bogus toml"),
+    };
 
-    if let Some(deps) = toml.get("dependencies").and_then(Item::as_table) {
-        Hash::hash(&deps.to_string(), &mut hasher);
-    }
-
-    if let Some(deps) = toml.get("dev-dependencies").and_then(Item::as_table) {
-        Hash::hash(&deps.to_string(), &mut hasher);
-    }
-
-    if let Some(deps) = toml.get("build-dependencies").and_then(Item::as_table) {
-        Hash::hash(&deps.to_string(), &mut hasher);
+    for (name, item) in t.iter() {
+        match name {
+            "dependencies" | "dev-dependencies" | "build-dependencies" | "target" => {
+                add_checksum(item, &mut hasher)?
+            }
+            _ => debug!("Skipping toml key {name:?} while calculating checksum"),
+        }
     }
 
     // keep numbers positive
@@ -121,13 +141,8 @@ fn get_checksum(toml: &Document) -> anyhow::Result<i64> {
     )?)
 }
 
-fn apply_change<'a>(
-    change: &'a ChangePackage,
-    changed: &mut bool,
-    to: &mut Table,
-) -> (String, Item) {
+fn compile_change_package(change: &ChangePackage) -> (Item, String) {
     let mut new = InlineTable::new();
-    *changed = true;
     change.source.insert_into(&change.version, &mut new);
     let feats = change
         .feats
@@ -141,20 +156,42 @@ fn apply_change<'a>(
         new.insert("default-features", Value::from(false));
     }
 
-    let new_name;
-    if change.rename {
-        use std::hash::{Hash, Hasher};
+    let new_name = if change.rename {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Hash::hash(&change.source, &mut hasher);
         let hash = Hasher::finish(&hasher);
-        new_name = format!("hackerman-{}-{}", &change.name, hash);
         new.insert("package", Value::from(&change.name));
+        format!("hackerman-{}-{}", &change.name, hash)
     } else {
-        new_name = change.name.clone();
+        change.name.clone()
     };
-    let old = to.insert(&new_name, value(new));
+    (value(new), new_name)
+}
 
-    (new_name, old.unwrap_or_else(|| value(false)))
+#[derive(Default)]
+struct Stash {
+    norm: Vec<(String, Item)>,
+    dev: Vec<(String, Item)>,
+}
+
+impl Index<Ty> for Stash {
+    type Output = Vec<(String, Item)>;
+
+    fn index(&self, index: Ty) -> &Self::Output {
+        match index {
+            Ty::Dev => &self.dev,
+            Ty::Norm => &self.norm,
+        }
+    }
+}
+
+impl IndexMut<Ty> for Stash {
+    fn index_mut(&mut self, index: Ty) -> &mut Self::Output {
+        match index {
+            Ty::Dev => &mut self.dev,
+            Ty::Norm => &mut self.norm,
+        }
+    }
 }
 
 fn set_dependencies_toml(
@@ -163,26 +200,18 @@ fn set_dependencies_toml(
     changes: &[ChangePackage],
 ) -> anyhow::Result<bool> {
     let mut was_modified = false;
+    if toml.contains_key("target") {
+        anyhow::bail!("target filtered dependencies present in the workspace are not supported by split mode hack")
+    }
+    let mut saved = Stash::default();
 
-    // this sets "dependencies" part
-    let dependencies = get_table(toml, &["dependencies"])?;
-    #[allow(clippy::needless_collect)] // collect is must to deal with dependencies
-    let norm_saved = changes
-        .iter()
-        .filter(|change| change.ty == Ty::Norm)
-        .map(|change| apply_change(change, &mut was_modified, dependencies))
-        .collect::<Vec<_>>();
-    dependencies.sort_values();
-
-    // this sets "dev-dependencies" part
-    let dev_dependencies = get_table(toml, &["dev-dependencies"])?;
-    #[allow(clippy::needless_collect)] // collect is must to deal with dependencies
-    let dev_saved = changes
-        .iter()
-        .filter(|change| change.ty == Ty::Dev)
-        .map(|change| apply_change(change, &mut was_modified, dev_dependencies))
-        .collect::<Vec<_>>();
-    dev_dependencies.sort_values();
+    for change in changes {
+        let top = change.ty.table_name();
+        let table = get_table(toml, &[top])?;
+        let (item, name) = compile_change_package(change);
+        let old = table.insert(&name, item).unwrap_or_else(|| value(false));
+        saved[change.ty].push((name, old))
+    }
 
     if lock {
         was_modified = true;
@@ -195,13 +224,13 @@ fn set_dependencies_toml(
 
     let stash = get_table(toml, NORM_STASH_PATH)?;
     stash.set_position(998);
-    for (name, val) in norm_saved {
+    for (name, val) in saved.norm {
         stash.insert(&name, val);
     }
 
     let dev_stash = get_table(toml, DEV_STASH_PATH)?;
     dev_stash.set_position(999);
-    for (name, val) in dev_saved {
+    for (name, val) in saved.dev {
         dev_stash.insert(&name, val);
     }
     if was_modified {
@@ -285,6 +314,12 @@ pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use cargo_metadata::Version;
+
+    use crate::source::PackageSource;
+
     use super::*;
 
     #[test]
@@ -296,7 +331,7 @@ package = 1.0
         .parse::<Document>()?;
 
         let hash = get_checksum(&toml)?;
-        assert_eq!(hash, 0);
+        assert_eq!(hash, 2329902156198620770);
         Ok(())
     }
 
@@ -312,7 +347,7 @@ from_git = { git = "https://github.com/rust-lang/regex" }
 
         let hash = get_checksum(&toml)?;
 
-        assert_eq!(hash, 727563485410475519);
+        assert_eq!(hash, 559992462246589769);
         Ok(())
     }
 
@@ -345,7 +380,7 @@ from_git = { git = "https://github.com/rust-lang/regex" }
     fn add_banner_works() -> anyhow::Result<()> {
         let s = r#"
 [dependencies]
-version = "1.0"
+version = 1.0
 
 [dev-dependencies]
 "#;
@@ -353,6 +388,60 @@ version = "1.0"
         add_banner(&mut toml)?;
         let expected = format!("{BANNER}{s}");
         assert_eq!(expected, toml.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn set_dependencies_works_0() -> anyhow::Result<()> {
+        let mut toml = r#"
+[dependencies]
+package = 1.0
+"#
+        .parse::<Document>()?;
+
+        let mut feats = BTreeSet::new();
+        feats.insert("dummy".to_string());
+
+        let changes = [ChangePackage {
+            name: "package".to_string(),
+            ty: Ty::Norm,
+            version: Version::new(1, 0, 0),
+            source: PackageSource::CRATES_IO,
+            feats,
+            rename: false,
+        }];
+
+        set_dependencies_toml(&mut toml, false, &changes)?;
+
+        todo!("{toml}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn set_dependencies_works_1() -> anyhow::Result<()> {
+        let mut toml = r#"
+[target.'cfg(target_os = "linux")'.dependencies]
+package = 1.0
+"#
+        .parse::<Document>()?;
+
+        let mut feats = BTreeSet::new();
+        feats.insert("dummy".to_string());
+
+        let changes = [ChangePackage {
+            name: "package".to_string(),
+            ty: Ty::Norm,
+            version: Version::new(1, 0, 0),
+            source: PackageSource::CRATES_IO,
+            feats,
+            rename: false,
+        }];
+
+        set_dependencies_toml(&mut toml, false, &changes)?;
+
+        todo!("{toml}");
+
         Ok(())
     }
 }

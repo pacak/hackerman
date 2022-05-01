@@ -194,6 +194,11 @@ pub enum PackageSource<'a> {
     File { path: Utf8PathBuf },
 }
 
+impl PackageSource<'_> {
+    pub const CRATES_IO: Self =
+        PackageSource::Registry("https://github.com/rust-lang/crates.io-index");
+}
+
 impl std::fmt::Display for PackageSource<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
