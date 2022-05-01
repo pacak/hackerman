@@ -88,7 +88,8 @@ impl ChangePackage {
                 ChangePackage {
                     name: package.name.clone(),
                     ty,
-                    source: PackageSource::Registry(package.version.clone()),
+                    version: package.version.clone(),
+                    source: PackageSource::Registry,
                     feats,
                     rename,
                 }
@@ -122,6 +123,7 @@ impl ChangePackage {
             ChangePackage {
                 name: package.name.clone(),
                 ty,
+                version: package.version.clone(),
                 source,
                 feats,
                 rename,
@@ -141,15 +143,16 @@ fn relative_import_dir(importer: Pid, importee: Pid) -> Option<Utf8PathBuf> {
 pub struct ChangePackage {
     pub name: String,
     pub ty: Ty,
+    pub version: Version,
     pub source: PackageSource,
     pub feats: BTreeSet<String>,
     pub rename: bool,
 }
 
 impl PackageSource {
-    pub fn insert_into(&self, table: &mut toml_edit::InlineTable) {
+    pub fn insert_into(&self, ver: &Version, table: &mut toml_edit::InlineTable) {
         match self {
-            PackageSource::Registry(ver) => {
+            PackageSource::Registry => {
                 table.insert("version", toml_edit::Value::from(ver.to_string()));
             }
             PackageSource::Git { url: _, ver: _ } => todo!(),
@@ -163,7 +166,7 @@ impl PackageSource {
 #[derive(Debug, Hash)]
 #[allow(clippy::module_name_repetitions)]
 pub enum PackageSource {
-    Registry(Version),
+    Registry,
     Git { url: String, ver: GitVersion },
     File { path: Utf8PathBuf },
 }
@@ -180,7 +183,7 @@ impl std::fmt::Display for GitVersion {
 impl std::fmt::Display for PackageSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PackageSource::Registry(ver) => ver.fmt(f),
+            PackageSource::Registry => f.write_str("registry"),
             PackageSource::Git { url, ver } => write!(f, "{url} {ver}"),
             PackageSource::File { path } => path.fmt(f),
         }

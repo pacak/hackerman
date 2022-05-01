@@ -128,7 +128,7 @@ fn apply_change<'a>(
 ) -> (String, Item) {
     let mut new = InlineTable::new();
     *changed = true;
-    change.source.insert_into(&mut new);
+    change.source.insert_into(&change.version, &mut new);
     let feats = change
         .feats
         .iter()
