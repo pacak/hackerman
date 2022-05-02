@@ -212,6 +212,11 @@ fn set_dependencies_toml(
         let old = table.insert(&name, item).unwrap_or_else(|| value(false));
         saved[change.ty].push((name, old))
     }
+    for &ty in &[Ty::Norm, Ty::Dev] {
+        if !saved[ty].is_empty() {
+            get_table(toml, &[ty.table_name()])?.sort_values();
+        }
+    }
 
     if lock {
         was_modified = true;
