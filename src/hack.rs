@@ -50,7 +50,7 @@ pub fn hack(
         let mut changeset = changes
             .into_iter()
             .map(|(dep, ty, rename, feats)| ChangePackage::make(member, dep, ty, rename, feats))
-            .collect::<Vec<_>>();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         if dry {
             changeset.sort_by(|a, b| a.name.cmp(&b.name));
@@ -148,7 +148,8 @@ pub enum Ty {
 }
 
 impl Ty {
-    pub fn table_name(&self) -> &'static str {
+    #[must_use]
+    pub const fn table_name(&self) -> &'static str {
         match self {
             Ty::Dev => "dev-dependencies",
             Ty::Norm => "dependencies",
@@ -441,7 +442,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                     let package = fg.features[dep_pid].fid()?.pid;
                     let feats = feats
                         .iter()
-                        .filter_map(|f| match fg.features[*f].fid().unwrap().dep {
+                        .filter_map(|f| match fg.features[*f].fid()?.dep {
                             Feat::Base => None,
                             Feat::Named(name) => Some(name.to_string()),
                         })

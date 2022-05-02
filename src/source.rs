@@ -113,19 +113,20 @@ impl<'a> ChangePackage<'a> {
         ty: Ty,
         rename: bool,
         mut feats: BTreeSet<String>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
+
         if let Some(src) = &package.source {
-            let source = PackageSource::try_from(src.repr.as_str()).unwrap();
-            ChangePackage {
+            let source = PackageSource::try_from(src.repr.as_str())?;
+            Ok(ChangePackage {
                 name: package.name.clone(),
                 ty,
                 version: package.version.clone(),
                 source,
                 feats,
                 rename,
-            }
+            })
         } else {
             let source = match relative_import_dir(importer, importee) {
                 Some(path) => PackageSource::File { path },
@@ -143,14 +144,14 @@ impl<'a> ChangePackage<'a> {
                     }
                 }
             };
-            ChangePackage {
+            Ok(ChangePackage {
                 name: package.name.clone(),
                 ty,
                 version: package.version.clone(),
                 source,
                 feats,
                 rename,
-            }
+            })
         }
     }
 }
@@ -178,7 +179,9 @@ impl PackageSource<'_> {
             PackageSource::Registry(_) => {
                 table.insert("version", toml_edit::Value::from(ver.to_string()));
             }
-            PackageSource::Git(_) => todo!(),
+            PackageSource::Git(url) => {
+                table.insert("git", toml_edit::Value::from(*url));
+            }
             PackageSource::File { path } => {
                 table.insert("path", toml_edit::Value::from(path.to_string()));
             }

@@ -129,7 +129,7 @@ fn get_checksum(toml: &Document) -> anyhow::Result<i64> {
     for (name, item) in t.iter() {
         match name {
             "dependencies" | "dev-dependencies" | "build-dependencies" | "target" => {
-                add_checksum(item, &mut hasher)?
+                add_checksum(item, &mut hasher)?;
             }
             _ => debug!("Skipping toml key {name:?} while calculating checksum"),
         }
@@ -210,7 +210,7 @@ fn set_dependencies_toml(
         let table = get_table(toml, &[top])?;
         let (item, name) = compile_change_package(change);
         let old = table.insert(&name, item).unwrap_or_else(|| value(false));
-        saved[change.ty].push((name, old))
+        saved[change.ty].push((name, old));
     }
     for &ty in &[Ty::Norm, Ty::Dev] {
         if !saved[ty].is_empty() {
@@ -418,35 +418,43 @@ package = 1.0
 
         set_dependencies_toml(&mut toml, false, &changes)?;
 
-        todo!("{toml}");
+        let expected = r#"
+[dependencies]
+package = { version = "1.0.0", features = ["dummy"], default-features = false }
 
-        Ok(())
-    }
-
-    #[test]
-    fn set_dependencies_works_1() -> anyhow::Result<()> {
-        let mut toml = r#"
-[target.'cfg(target_os = "linux")'.dependencies]
+[package.metadata.hackerman.stash.dependencies]
 package = 1.0
-"#
-        .parse::<Document>()?;
+"#;
 
-        let mut feats = BTreeSet::new();
-        feats.insert("dummy".to_string());
-
-        let changes = [ChangePackage {
-            name: "package".to_string(),
-            ty: Ty::Norm,
-            version: Version::new(1, 0, 0),
-            source: PackageSource::CRATES_IO,
-            feats,
-            rename: false,
-        }];
-
-        set_dependencies_toml(&mut toml, false, &changes)?;
-
-        todo!("{toml}");
+        assert_eq!(toml.to_string(), expected);
 
         Ok(())
     }
+    /*
+        #[test]
+        fn set_dependencies_works_1() -> anyhow::Result<()> {
+            let mut toml = r#"
+    [target.'cfg(target_os = "linux")'.dependencies]
+    package = 1.0
+    "#
+            .parse::<Document>()?;
+
+            let mut feats = BTreeSet::new();
+            feats.insert("dummy".to_string());
+
+            let changes = [ChangePackage {
+                name: "package".to_string(),
+                ty: Ty::Norm,
+                version: Version::new(1, 0, 0),
+                source: PackageSource::CRATES_IO,
+                feats,
+                rename: false,
+            }];
+
+            set_dependencies_toml(&mut toml, false, &changes)?;
+
+            todo!("{toml}");
+
+            Ok(())
+        }*/
 }
