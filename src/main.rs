@@ -196,10 +196,7 @@ fn main() -> anyhow::Result<()> {
                 opts::Focus::Documentation => {
                     use std::process::Command;
                     // intentionally ignoring documentation field to avoid serde shenanigans
-                    let url = format!(
-                        "https://docs.rs/{}/{}/{}",
-                        package.name, package.version, package.name
-                    );
+                    let url = format!("https://docs.rs/{}/{}", package.name, package.version);
 
                     if cfg!(target_os = "linux") {
                         Command::new("xdg-open").arg(url).output()?;
