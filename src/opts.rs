@@ -116,12 +116,12 @@ pub enum Action {
     ShowCrate {
         #[bpaf(external(profile))]
         profile: Profile,
+        #[bpaf(external(focus), fallback(Focus::Manifest))]
+        focus: Focus,
         #[bpaf(positional("CRATE"))]
         krate: String,
         #[bpaf(external(version_if))]
         version: Option<Version>,
-        #[bpaf(external(focus), fallback(Focus::Manifest))]
-        focus: Focus,
     },
 }
 
