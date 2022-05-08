@@ -11,7 +11,7 @@ exclude = ["TODO", "test_workspaces"]
 
 [dependencies]
 anyhow = "1.0.52"
-bpaf = { version = "0.4", features = ["derive"] } # { path = "../bpaf", features = ["derive"] }
+bpaf = { version = "0.4", features = ["derive"] }
 cargo-platform = "0.1"
 cargo_metadata = { version = "0.14" }
 dot = "0.1.4"
