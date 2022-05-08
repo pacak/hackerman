@@ -776,7 +776,10 @@ mod test {
     }
 
     fn get_demo_meta(ix: usize) -> anyhow::Result<Metadata> {
-        let path = format!("{}/demo/{ix}/metadata.json", env!("CARGO_MANIFEST_DIR"));
+        let path = format!(
+            "{}/test_workspaces/{ix}/metadata.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let data = std::fs::read_to_string(path)?;
         Ok(cargo_metadata::MetadataCommand::parse(data)?)
     }
