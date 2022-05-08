@@ -196,7 +196,7 @@ pub enum Focus {
     #[bpaf(short, long)]
     /// Show crate readme
     Readme,
-    #[bpaf(short, long("doc"))]
+    #[bpaf(short, long("doc"), long("docs"))]
     /// Open documentation URL
     Documentation,
 }
