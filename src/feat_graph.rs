@@ -32,6 +32,7 @@ impl std::fmt::Display for Feature<'_> {
 }
 
 impl<'a> Feature<'a> {
+    #[must_use]
     pub const fn fid(&self) -> Option<Fid<'a>> {
         match self {
             Feature::Root => None,
@@ -39,15 +40,18 @@ impl<'a> Feature<'a> {
         }
     }
 
+    #[must_use]
     pub fn pid(&self) -> Option<Pid<'a>> {
         self.fid().map(|fid| fid.pid)
     }
 
+    #[must_use]
     pub fn package_id(&self) -> Option<&PackageId> {
         let Pid(pid, meta) = self.pid()?;
         Some(&meta.packages[pid].id)
     }
 
+    #[must_use]
     pub const fn is_workspace(&self) -> bool {
         match self {
             Feature::Root | Feature::Workspace(_) => true,
@@ -115,6 +119,7 @@ impl<'a> FeatGraph<'a> {
     }
 
     /// for any node find node for the base of this package
+    #[must_use]
     pub fn base_node(&self, node: NodeIndex) -> Option<NodeIndex> {
         self.fid_cache
             .get(&self.features[node].fid()?.get_base())
@@ -448,16 +453,14 @@ impl<'a> FeatGraph<'a> {
 pub struct Pid<'a>(usize, &'a Metadata);
 
 impl<'a> Pid<'a> {
+    #[must_use]
     pub fn package(self) -> &'a cargo_metadata::Package {
         &self.1.packages[self.0]
-    }
-
-    pub fn package_id(self) -> &'a cargo_metadata::PackageId {
-        &self.1.packages[self.0].id
     }
 }
 
 impl<'a> Pid<'a> {
+    #[must_use]
     pub fn root(self) -> Fid<'a> {
         if self.package().features.contains_key("default") {
             self.named("default")
@@ -466,12 +469,14 @@ impl<'a> Pid<'a> {
         }
     }
 
+    #[must_use]
     pub const fn base(self) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Base,
         }
     }
+    #[must_use]
     pub const fn named(self, name: &'a str) -> Fid<'a> {
         Fid {
             pid: self,
@@ -516,7 +521,7 @@ pub struct Fid<'a> {
 
 impl std::fmt::Display for Fid<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let id = self.pid.package_id();
+        let id = &self.pid.package().id;
         match self.dep {
             Feat::Base => write!(f, "{id}"),
             Feat::Named(name) => write!(f, "{id}:{name}"),
@@ -664,16 +669,6 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     fn kind(&self) -> dot::Kind {
         dot::Kind::Digraph
     }
-}
-
-pub fn dump(graph: &FeatGraph) -> anyhow::Result<()> {
-    use tempfile::NamedTempFile;
-    let mut file = NamedTempFile::new()?;
-    dot::render(graph, &mut file)?;
-    std::process::Command::new("xdot")
-        .args([file.path()])
-        .output()?;
-    Ok(())
 }
 
 pub trait HasIndex<'a> {

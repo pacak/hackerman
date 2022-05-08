@@ -75,14 +75,17 @@ pub fn tree<'a>(
         dfs.move_to(next);
         while let Some(node) = dfs.next(&g) {
             let this_node = if package_nodes {
-                fg.base_node(node).unwrap()
+                fg.base_node(node).expect("base node must exist")
             } else {
                 node
             };
             nodes.insert(this_node);
             for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
                 if package_nodes {
-                    new_edges.insert((fg.base_node(edge.target()).unwrap(), this_node));
+                    new_edges.insert((
+                        fg.base_node(edge.target()).expect("base node must exist"),
+                        this_node,
+                    ));
                 } else {
                     edges.insert(edge.id());
                 }
@@ -148,14 +151,17 @@ pub fn explain<'a>(
         dfs.move_to(next);
         while let Some(node) = dfs.next(&g) {
             let this_node = if package_nodes {
-                fg.base_node(node).unwrap()
+                fg.base_node(node).expect("base package node must exist")
             } else {
                 node
             };
             nodes.insert(this_node);
             for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
                 if package_nodes {
-                    new_edges.insert((fg.base_node(edge.target()).unwrap(), this_node));
+                    new_edges.insert((
+                        fg.base_node(edge.target()).expect("base node must exist"),
+                        this_node,
+                    ));
                 } else {
                     edges.insert(edge.id());
                 }
@@ -189,9 +195,13 @@ fn dump_fg(fg: &FeatGraph) -> anyhow::Result<()> {
     {
         let mut file = tempfile::NamedTempFile::new()?;
         dot::render(fg, &mut file)?;
-        std::process::Command::new("xdot")
+        if std::process::Command::new("xdot")
             .args([file.path()])
-            .output()?;
+            .output()
+            .is_err()
+        {
+            eprintln!("xdot not found, you can either install it or hackerman with \"spawn_xdot\" feature disabled");
+        }
     }
 
     #[cfg(not(feature = "spawn_xdot"))]

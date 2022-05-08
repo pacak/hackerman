@@ -167,7 +167,7 @@ Cargo.toml merge=hackerman
 
 To create a global gitattributes file you need to specify a path to it inside the global git
 config:
-```ignore
+```text
 [core]
     attributesfile = ~/.gitattributes
 ```
