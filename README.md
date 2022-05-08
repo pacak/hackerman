@@ -101,6 +101,9 @@ version of one you are interested in but it's optional.
 You can also specify which feature to look for, otherwise hackerman
 will be looking for all of them.
 
+Note, `hackerman` uses `xdot` by default. If it's not available - it is possible to install
+`hackerman` without `"spawn_xdot"` feature to produce `.dot` file to stdout
+
 Examples:
 
 ```text
