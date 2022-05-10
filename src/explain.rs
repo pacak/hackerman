@@ -206,7 +206,7 @@ fn dump_fg(fg: &FeatGraph) -> anyhow::Result<()> {
 
     #[cfg(not(feature = "spawn_xdot"))]
     {
-        dot::render(&fg, &mut std::io::stdout())?;
+        dot::render(fg, &mut std::io::stdout())?;
     }
 
     Ok(())
