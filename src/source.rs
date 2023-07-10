@@ -2,7 +2,8 @@ use crate::{
     feat_graph::{FeatTarget, Pid},
     hack::Ty,
 };
-use cargo_metadata::{camino::Utf8PathBuf, Version};
+use cargo_metadata::camino::Utf8PathBuf;
+use semver::Version;
 use std::collections::{BTreeSet, HashMap};
 use tracing::debug;
 

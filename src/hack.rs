@@ -30,7 +30,7 @@ pub fn hack(
     meta: &Metadata,
     triplets: Vec<&str>,
     cfgs: Vec<Cfg>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     force_config(&mut lock, "lock", &meta.workspace_metadata);
     force_config(&mut no_dev, "no-dev", &meta.workspace_metadata);
 
@@ -41,7 +41,7 @@ pub fn hack(
     if dry {
         if changeset.is_empty() {
             println!("Features are unified as is");
-            return Ok(());
+            return Ok(false);
         }
         println!("Hackerman would like to set those features for following packets:");
     }
@@ -73,7 +73,7 @@ pub fn hack(
         anyhow::bail!("Features are not unified");
     }
 
-    Ok(())
+    Ok(has_changes)
 }
 
 type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<(Pid<'a>, Ty, bool, BTreeSet<String>)>>;

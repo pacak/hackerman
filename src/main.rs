@@ -11,12 +11,13 @@ use cargo_metadata::camino::Utf8PathBuf;
 use cargo_platform::Cfg;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    process::Command,
     str::FromStr,
 };
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-fn start_subscriber(level: Level) {
+fn start_subscriber((_, level): (usize, Level)) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| (EnvFilter::default().add_directive(level.into())));
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -43,7 +44,9 @@ fn get_cfgs() -> anyhow::Result<Vec<Cfg>> {
 }
 
 fn main() -> anyhow::Result<()> {
-    match opts::action().run() {
+    let action = opts::action().fallback_to_usage().run();
+
+    match action {
         Action::Hack {
             profile,
             dry,
@@ -56,23 +59,28 @@ fn main() -> anyhow::Result<()> {
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             hack(dry, lock, no_dev, &metadata, triplets, cfgs)?;
+
             // regenerate Cargo.lock file
-            profile.exec()?;
+            if !dry {
+                profile.exec()?;
+            }
         }
 
-        Action::Restore { profile, single } => {
+        Action::Restore { profile, separate } => {
             start_subscriber(profile.verbosity);
             let mut changed = false;
-            if let Some(path) = single {
-                let utf8_path = Utf8PathBuf::try_from(path)?;
-                changed |= toml::restore(&utf8_path)?;
-            } else {
+            if separate.is_empty() {
                 let metadata = profile.exec()?;
                 let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
                 for package in &metadata.packages {
                     if members.contains(&package.id) {
                         changed |= toml::restore(&package.manifest_path)?;
                     }
+                }
+            } else {
+                for path in separate {
+                    let utf8_path = Utf8PathBuf::try_from(path)?;
+                    changed |= toml::restore(&utf8_path)?;
                 }
             }
             if changed {
@@ -112,6 +120,7 @@ fn main() -> anyhow::Result<()> {
             feature,
             version,
             no_dev,
+            stdout,
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
@@ -128,6 +137,7 @@ fn main() -> anyhow::Result<()> {
                 package_nodes,
                 workspace,
                 no_dev,
+                stdout,
             )?;
         }
 
@@ -138,6 +148,7 @@ fn main() -> anyhow::Result<()> {
             version,
             no_transitive_opt,
             package_nodes,
+            stdout,
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
@@ -153,6 +164,7 @@ fn main() -> anyhow::Result<()> {
                 feature.as_ref(),
                 version.as_ref(),
                 package_nodes,
+                stdout,
             )?;
         }
         Action::ShowCrate {
@@ -181,36 +193,34 @@ fn main() -> anyhow::Result<()> {
                     let manifest = if orig.exists() {
                         std::fs::read_to_string(&orig)?
                     } else {
-                        std::fs::read_to_string(&path)?
+                        std::fs::read_to_string(path)?
                     };
                     println!("{manifest}");
                     return Ok(());
                 }
                 opts::Focus::Readme => {
+                    let manifest = &package.manifest_path;
                     if let Some(readme) = &package.readme {
-                        println!("{}", std::fs::read_to_string(&readme)?);
+                        let readme = manifest.with_file_name(readme);
+                        println!("{}", std::fs::read_to_string(readme)?);
                     } else {
                         anyhow::bail!("Package {krate} v{} defines no readme", package.version);
                     }
                 }
                 opts::Focus::Documentation => {
-                    use std::process::Command;
                     // intentionally ignoring documentation field to avoid serde shenanigans
                     let url = format!("https://docs.rs/{}/{}", package.name, package.version);
 
-                    if cfg!(target_os = "linux") {
-                        Command::new("xdg-open").arg(url).output()?;
-                    } else if cfg!(target_os = "windows") {
-                        Command::new("start").arg(url).output()?;
-                    } else {
-                        #[cfg(feature = "webbroser")]
-                        {
-                            webbrowser::open(url)?;
-                            return Ok(());
-                        }
-                        println!("{url}");
-                    }
+                    open_url(&url)?;
+
                     return Ok(());
+                }
+                opts::Focus::Repository => {
+                    if let Some(url) = &package.repository {
+                        open_url(url.as_ref())?;
+                    } else {
+                        anyhow::bail!("Package {krate} v{} defines no repository", package.version);
+                    }
                 }
             }
         }
@@ -248,6 +258,22 @@ fn main() -> anyhow::Result<()> {
                 println!("All packages are present in one version only");
             }
         }
+    }
+    Ok(())
+}
+
+fn open_url(url: &str) -> anyhow::Result<()> {
+    if cfg!(target_os = "linux") {
+        Command::new("xdg-open").arg(url).output()?;
+    } else if cfg!(target_os = "windows") {
+        Command::new("start").arg(url).output()?;
+    } else {
+        #[cfg(feature = "webbroser")]
+        {
+            webbrowser::open(url)?;
+            return Ok(());
+        }
+        println!("{url}");
     }
     Ok(())
 }

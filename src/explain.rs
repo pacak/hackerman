@@ -2,11 +2,12 @@ use crate::{
     feat_graph::{FeatGraph, HasIndex},
     metadata::{DepKindInfo, Link},
 };
-use cargo_metadata::Version;
+
 use petgraph::{
     graph::NodeIndex,
     visit::{Dfs, EdgeFiltered, EdgeRef, IntoEdgesDirected, Reversed},
 };
+use semver::Version;
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
@@ -43,6 +44,7 @@ pub fn tree<'a>(
     package_nodes: bool,
     workspace: bool,
     no_dev: bool,
+    stdout: bool,
 ) -> anyhow::Result<()> {
     fg.shrink_to_target()?;
 
@@ -111,7 +113,7 @@ pub fn tree<'a>(
 
     fg.focus_nodes = Some(nodes);
     fg.focus_edges = Some(edges);
-    dump_fg(fg)
+    dump_fg(fg, stdout)
 }
 
 pub fn explain<'a>(
@@ -120,6 +122,7 @@ pub fn explain<'a>(
     feature: Option<&String>,
     version: Option<&Version>,
     package_nodes: bool,
+    stdout: bool,
 ) -> anyhow::Result<()> {
     fg.shrink_to_target()?;
     let mut packages = collect_packages(fg, krate, feature, version);
@@ -187,27 +190,23 @@ pub fn explain<'a>(
 
     fg.focus_nodes = Some(nodes);
     fg.focus_edges = Some(edges);
-    dump_fg(fg)
+    dump_fg(fg, stdout)
 }
 
-fn dump_fg(fg: &FeatGraph) -> anyhow::Result<()> {
-    #[cfg(feature = "spawn_xdot")]
-    {
+fn dump_fg(fg: &FeatGraph, stdout: bool) -> anyhow::Result<()> {
+    if !stdout {
         let mut file = tempfile::NamedTempFile::new()?;
         dot::render(fg, &mut file)?;
         if std::process::Command::new("xdot")
             .args([file.path()])
             .output()
-            .is_err()
+            .is_ok()
         {
-            eprintln!("xdot not found, you can either install it or hackerman with \"spawn_xdot\" feature disabled");
+            return Ok(());
         }
     }
 
-    #[cfg(not(feature = "spawn_xdot"))]
-    {
-        dot::render(fg, &mut std::io::stdout())?;
-    }
+    dot::render(fg, &mut std::io::stdout())?;
 
     Ok(())
 }

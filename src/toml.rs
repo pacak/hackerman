@@ -27,7 +27,7 @@ pub fn set_dependencies(
     let mut toml = std::fs::read_to_string(path)?.parse::<Document>()?;
 
     set_dependencies_toml(&mut toml, lock, changes)?;
-    std::fs::write(&path, toml.to_string())?;
+    std::fs::write(path, toml.to_string())?;
     Ok(())
 }
 
@@ -51,7 +51,7 @@ fn get_decor(toml: &mut Document) -> anyhow::Result<&mut Decor> {
 
 fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
     let decor = get_decor(toml)?;
-    match decor.prefix() {
+    match decor.prefix().and_then(|x| x.as_str()) {
         Some(old) => {
             let new = format!("{BANNER}{old}");
             decor.set_prefix(new);
@@ -63,7 +63,7 @@ fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
 
 fn strip_banner(toml: &mut Document) -> anyhow::Result<bool> {
     let decor = get_decor(toml)?;
-    Ok(match decor.prefix() {
+    Ok(match decor.prefix().and_then(|x| x.as_str()) {
         Some(cur) => {
             if let Some(rest) = cur.strip_prefix(BANNER) {
                 let new = rest.to_string();
@@ -245,21 +245,21 @@ fn set_dependencies_toml(
 }
 
 pub fn restore_path(manifest_path: &Path) -> anyhow::Result<bool> {
-    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
     let changed = restore_toml(&mut toml)?;
     if changed {
-        std::fs::write(&manifest_path, toml.to_string())?;
+        std::fs::write(manifest_path, toml.to_string())?;
     }
     Ok(changed)
 }
 
 pub fn restore(manifest_path: &Utf8Path) -> anyhow::Result<bool> {
-    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
 
     info!("Restoring {manifest_path}");
     let changed = restore_toml(&mut toml).with_context(|| format!("in {manifest_path}"))?;
     if changed {
-        std::fs::write(&manifest_path, toml.to_string())?;
+        std::fs::write(manifest_path, toml.to_string())?;
     } else {
         debug!("No changes to {manifest_path}");
     }
@@ -298,7 +298,7 @@ fn restore_toml(toml: &mut Document) -> anyhow::Result<bool> {
 }
 
 pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
-    let mut toml = std::fs::read_to_string(&manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
 
     let checksum = get_checksum(&toml)?;
 
@@ -321,7 +321,7 @@ pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use cargo_metadata::Version;
+    use semver::Version;
 
     use crate::source::PackageSource;
 
