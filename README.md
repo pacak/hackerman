@@ -1,12 +1,22 @@
-Hackerman solves following problems
+# cargo-hackerman
+  ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+  [![cargo-hackerman on crates.io](https://img.shields.io/crates/v/cargo-hackerman)](https://crates.io/crates/cargo-hackerman)
+  [![cargo-hackerman on docs.rs](https://docs.rs/cargo-hackerman/badge.svg)](https://docs.rs/cargo-hackerman)
+  [![Source Code Repository](https://img.shields.io/badge/Code-On%20github.com-blue)](https://github.com/pacak/cargo-hackerman)
+  [![cargo-hackerman on deps.rs](https://deps.rs/repo/github/pacak/cargo-hackerman/status.svg)](https://deps.rs/repo/github/pacak/cargo-hackerman)
 
-- [Command line summary](#command-summary)
+
+
+# Hackerman solves following problems
+
 - [Avoiding unnecessary recompilations](#cargo-hackerman-hack)
 - [Explaining why workspace depends on a certain crate](#cargo-hackerman-explain)
 - [Explaining what crates are needed for a certain crate](#cargo-hackerman-tree)
 - [Finding crates that a workspace needs in multiple versions](#cargo-hackerman-dupes)
 - [Quick lookup for crate documentation, homepage, etc](#cargo-hackerman-show)
 
+
+[Command line summary](#command-summary)
 
 # Feature unification, what does this mean for me as a user?
 
@@ -236,7 +246,7 @@ You can undo those changes using `cargo hackerman restore`.
   You can make locking the default behavior by adding this to `Cargo.toml` in the workspace
 
   
-  ```toml
+  ```text
   [workspace.metadata.hackerman]
   lock = true
   ```
@@ -327,7 +337,7 @@ Restore files and merge with the default merge driver
 
 To use it you would add something like this to `~/.gitconfig` or `.git/config`
 
-  ```toml
+  ```text
   [merge "hackerman"]
   name = merge restored files with hackerman
   driver = cargo hackerman merge %O %A %B %P
@@ -336,7 +346,7 @@ To use it you would add something like this to `~/.gitconfig` or `.git/config`
 
 And something like this to `.git/gitattributes`
 
-  ```toml
+  ```text
   Cargo.toml merge=hackerman
   ```
 

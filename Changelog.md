@@ -1,6 +1,6 @@
 # Change Log
 
-## [0.2.6]
+## [0.2.6] - 2023-07-13
 - Documentation overhaul
 - bump dependencies
 - `--stdout` switch for `tree` and `explain`
