@@ -2,8 +2,8 @@
   ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
   [![cargo-hackerman on crates.io](https://img.shields.io/crates/v/cargo-hackerman)](https://crates.io/crates/cargo-hackerman)
   [![cargo-hackerman on docs.rs](https://docs.rs/cargo-hackerman/badge.svg)](https://docs.rs/cargo-hackerman)
-  [![Source Code Repository](https://img.shields.io/badge/Code-On%20github.com-blue)](https://github.com/pacak/cargo-hackerman)
-  [![cargo-hackerman on deps.rs](https://deps.rs/repo/github/pacak/cargo-hackerman/status.svg)](https://deps.rs/repo/github/pacak/cargo-hackerman)
+  [![Source Code Repository](https://img.shields.io/badge/Code-On%20github.com-blue)](https://github.com/pacak/hackerman)
+  [![cargo-hackerman on deps.rs](https://deps.rs/repo/github/pacak/cargo-hackerman/status.svg)](https://deps.rs/repo/github/pacak/hackerman)
 
 
 
