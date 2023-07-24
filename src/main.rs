@@ -90,6 +90,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         Action::Check { profile, no_dev } => {
+            start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
             let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
             for package in &metadata.packages {
