@@ -61,7 +61,10 @@ pub fn hack(
                     Ty::Dev => "dev ",
                     Ty::Norm => "",
                 };
-                println!("\t{} {}: {t}{:?}", change.name, change.source, change.feats);
+                println!(
+                    "\t{} {} {}: {t}{:?}",
+                    change.name, change.version, change.source, change.feats
+                );
             }
         } else {
             let path = &member.package().manifest_path;
