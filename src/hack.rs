@@ -424,9 +424,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         });
 
         let mut dfs = Dfs::new(&g, *package_index);
-        // go home clippy, you're drunk
-        #[allow(clippy::redundant_pattern_matching)]
-        while let Some(_) = dfs.next(&g) {}
+        while dfs.next(&g).is_some() {}
         deps.retain(|_key, val| val.len() > 1);
         for (dep, _versions) in deps {
             renames
