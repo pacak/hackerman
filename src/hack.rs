@@ -417,7 +417,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                     cell.borrow_mut()
                         .entry(dep.name.clone())
                         .or_insert_with(BTreeSet::new)
-                        .insert(dep.version.to_string());
+                        .insert(&dep.id);
                 }
                 false
             }
