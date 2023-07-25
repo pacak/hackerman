@@ -4,10 +4,10 @@ use crate::{
 };
 use cargo_metadata::camino::Utf8PathBuf;
 use semver::Version;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
-fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTreeSet<String>) {
+fn optimize_feats(declared: &BTreeMap<String, Vec<String>>, requested: &mut BTreeSet<String>) {
     let mut implicit = BTreeSet::new();
     for req in requested.iter() {
         for dep in declared.get(req).iter().flat_map(|x| x.iter()) {
@@ -23,9 +23,9 @@ fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTree
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap};
-
     use super::{optimize_feats, PackageSource};
+    use std::collections::{BTreeMap, BTreeSet};
+
     fn check(req: &[&str], decl: &[(&str, &[&str])], exp: &[&str]) {
         let mut requested = req
             .iter()
@@ -33,7 +33,7 @@ mod tests {
             .map(String::from)
             .collect::<BTreeSet<_>>();
 
-        let mut declared = HashMap::new();
+        let mut declared = BTreeMap::new();
         for (key, vals) in decl.iter() {
             declared.insert(
                 key.to_string(),
