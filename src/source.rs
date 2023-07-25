@@ -1,6 +1,6 @@
 use crate::{
     feat_graph::{FeatTarget, Pid},
-    hack::Ty,
+    hack::{FeatChange, Ty},
 };
 use cargo_metadata::camino::Utf8PathBuf;
 use semver::Version;
@@ -108,13 +108,13 @@ impl<'a> TryFrom<&'a str> for PackageSource<'a> {
 
 impl<'a> ChangePackage<'a> {
     #[allow(clippy::similar_names)]
-    pub fn make(
-        importer: Pid<'a>,
-        importee: Pid<'a>,
-        ty: Ty,
-        rename: bool,
-        mut feats: BTreeSet<String>,
-    ) -> anyhow::Result<Self> {
+    pub fn make(importer: Pid<'a>, importee: FeatChange<'a>) -> anyhow::Result<Self> {
+        let FeatChange {
+            pid: importee,
+            ty,
+            rename,
+            features: mut feats,
+        } = importee;
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
 

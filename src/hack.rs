@@ -49,7 +49,7 @@ pub fn hack(
     for (member, changes) in changeset {
         let mut changeset = changes
             .into_iter()
-            .map(|(dep, ty, rename, feats)| ChangePackage::make(member, dep, ty, rename, feats))
+            .map(|change| ChangePackage::make(member, change))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         if dry {
@@ -93,7 +93,7 @@ pub struct FeatChange<'a> {
     pub features: BTreeSet<String>,
 }
 
-type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<(Pid<'a>, Ty, bool, BTreeSet<String>)>>;
+type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<FeatChange<'a>>>;
 type DetachedDepTree = BTreeMap<NodeIndex, BTreeSet<NodeIndex>>;
 
 fn show_detached_dep_tree(tree: &DetachedDepTree, fg: &FeatGraph) -> &'static str {
@@ -462,11 +462,15 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                             Feat::Named(name) => Some(name.to_string()),
                         })
                         .collect::<BTreeSet<_>>();
-
-                    let rename_needed = renames
+                    let rename = renames
                         .get(&pid)
                         .map_or(false, |names| names.contains(&package.package().name));
-                    Some((package, ty, rename_needed, feats))
+                    Some(FeatChange {
+                        pid: package,
+                        ty,
+                        rename,
+                        features: feats,
+                    })
                 })
                 .collect::<Vec<_>>();
             (pid, feats)
