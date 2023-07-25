@@ -79,6 +79,20 @@ pub fn hack(
     Ok(has_changes)
 }
 
+pub struct FeatChange<'a> {
+    /// package id of the dependency we are adding
+    pub pid: Pid<'a>,
+
+    /// dependency type - dev or normal
+    pub ty: Ty,
+
+    /// Crate needs renaming
+    pub rename: bool,
+
+    /// Features to add
+    pub features: BTreeSet<String>,
+}
+
 type FeatChanges<'a> = BTreeMap<Pid<'a>, Vec<(Pid<'a>, Ty, bool, BTreeSet<String>)>>;
 type DetachedDepTree = BTreeMap<NodeIndex, BTreeSet<NodeIndex>>;
 
