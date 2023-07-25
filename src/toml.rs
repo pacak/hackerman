@@ -159,6 +159,7 @@ fn compile_change_package(change: &ChangePackage) -> (Item, String) {
     let new_name = if change.rename {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Hash::hash(&change.source, &mut hasher);
+        Hash::hash(&change.version, &mut hasher);
         let hash = Hasher::finish(&hasher);
         new.insert("package", Value::from(&change.name));
         format!("hackerman-{}-{}", &change.name, hash)
