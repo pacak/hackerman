@@ -99,12 +99,19 @@ impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
 pub struct Trigger<'a> {
     // foo.toml:
     // [features]
-    // serde1 = ["dep:serde", "rgb?/serde"]
+    // serde = ["dep:serde", "rgb?/serde"]
     // when both `feature` and `weak_dep` are present we must include `to_add`
-    pub package: Pid<'a>,   // foo
-    pub feature: Fid<'a>,   // serde1
-    pub weak_dep: Pid<'a>,  // rgb
+    //
+    // In this example, enabling the serde feature will enable the serde
+    // dependency. It will also enable the serde feature for the rgb
+    // dependency, but only if something else has enabled the rgb
+    // dependency.
+    //
+    pub package: Pid<'a>,  // foo
+    pub feature: Fid<'a>,  // serde
+    pub weak_dep: Pid<'a>, // rgb
     pub weak_feat: Fid<'a>, // rgb/serde
+                           //    pub kind: DepKindInfo,
 }
 
 impl<'a> FeatGraph<'a> {
