@@ -95,6 +95,18 @@ impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
     }
 }
 
+impl<'a> Index<NodeIndex> for FeatGraph<'a> {
+    type Output = Fid<'a>;
+
+    fn index(&self, index: NodeIndex) -> &Self::Output {
+        match &self.features[index] {
+            Feature::Root => panic!("root node fid"),
+            Feature::Workspace(f) => f,
+            Feature::External(f) => f,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Trigger<'a> {
     // foo.toml:
