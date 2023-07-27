@@ -10,10 +10,7 @@ use cargo_metadata::Metadata;
 use cargo_platform::Cfg;
 use petgraph::{
     graph::NodeIndex,
-    visit::{
-        Dfs, DfsPostOrder, EdgeFiltered, EdgeRef, IntoEdgeReferences, NodeFiltered, VisitMap,
-        Walker,
-    },
+    visit::{Dfs, DfsPostOrder, EdgeFiltered, EdgeRef, NodeFiltered, VisitMap, Walker},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::{debug, info, trace, warn};
@@ -142,18 +139,45 @@ fn collect_features_from<M>(
 ) where
     M: VisitMap<NodeIndex>,
 {
-    let g = EdgeFiltered::from_fn(&fg.features, |e| match filter {
-        Collect::AllTargets => true,
-        Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
-            .weight()
-            .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
+    let mut to_visit = Vec::new();
+    let mut added = BTreeSet::new();
+
+    let g = EdgeFiltered::from_fn(&fg.features, |e| {
+        // last_edge.set(Some(e));
+        match filter {
+            Collect::AllTargets => true,
+            Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
+                .weight()
+                .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
+        }
     });
 
-    while let Some(ix) = dfs.next(&g) {
-        if let Some(fid) = fg.features[ix].fid() {
-            if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
-                to.entry(*parent).or_insert_with(BTreeSet::new).insert(ix);
+    loop {
+        while let Some(ix) = dfs.next(&g) {
+            if let Some(fid) = fg.features[ix].fid() {
+                if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
+                    to.entry(*parent).or_insert_with(BTreeSet::new).insert(ix);
+                }
             }
+        }
+        for t in fg.triggers.iter() {
+            let package = fg.fid_cache[&t.package.base().get_base()];
+            let feature = fg.fid_cache[&t.feature]; // .unwrap();
+            let weak_dep = fg.fid_cache[&t.weak_dep];
+            let weak_feat = fg.fid_cache[&t.weak_feat];
+
+            if let Some(dep) = to.get(&package) {
+                if dep.contains(&feature) && dep.contains(&weak_dep) && added.insert(weak_feat) {
+                    println!("Trigger fires {:?}", t);
+                    to_visit.push(weak_feat);
+                }
+            }
+        }
+
+        if let Some(next) = to_visit.pop() {
+            dfs.move_to(next);
+        } else {
+            break;
         }
     }
 }
@@ -188,226 +212,168 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
 
     //    dump(fg)?;
     let mut changed = BTreeMap::new();
-    loop {
-        // First we collect all the named feats. The idea if some crate depends on
-        // the base feature (key) it should depend on all the named features of this
-        // crate (values).
+    //    loop {
+    // First we collect all the named feats. The idea if some crate depends on
+    // the base feature (key) it should depend on all the named features of this
+    // crate (values).
 
-        // DetachedDepTree is used to avoid fighting the borrow checker.
-        // indices correspond to features in graph
-        let mut raw_workspace_feats: DetachedDepTree = BTreeMap::new();
-        collect_features_from(
-            &mut Dfs::new(&fg.features, fg.root),
-            fg,
-            &mut raw_workspace_feats,
-            Collect::AllTargets,
-        );
+    // DetachedDepTree is used to avoid fighting the borrow checker.
+    // indices correspond to features in graph
+    let mut raw_workspace_feats: DetachedDepTree = BTreeMap::new();
+    collect_features_from(
+        &mut Dfs::new(&fg.features, fg.root),
+        fg,
+        &mut raw_workspace_feats,
+        Collect::AllTargets,
+    );
 
-        // For reasons unknown cargo resolves dependencies for all the targets including those
-        // never be used. While we have to care about features added at this step - we can skip
-        // them for crates that never will be used - such as winapi on linux. second pass does
-        // that.
-        let mut filtered_workspace_feats = BTreeMap::new();
-        collect_features_from(
-            &mut Dfs::new(&fg.features, fg.root),
-            fg,
-            &mut filtered_workspace_feats,
-            Collect::Target,
-        );
-        raw_workspace_feats.retain(|k, _| filtered_workspace_feats.contains_key(k));
+    // For reasons unknown cargo resolves dependencies for all the targets including those
+    // never be used. While we have to care about features added at this step - we can skip
+    // them for crates that never will be used - such as winapi on linux. second pass does
+    // that.
+    let mut filtered_workspace_feats = BTreeMap::new();
+    collect_features_from(
+        &mut Dfs::new(&fg.features, fg.root),
+        fg,
+        &mut filtered_workspace_feats,
+        Collect::Target,
+    );
+    raw_workspace_feats.retain(|k, _| filtered_workspace_feats.contains_key(k));
 
-        info!(
-            "Accumulated workspace dependencies{}",
-            show_detached_dep_tree(&raw_workspace_feats, fg)
-        );
-        let members = {
-            let workspace_only_graph =
-                NodeFiltered::from_fn(&fg.features, |node| fg.features[node].is_workspace());
+    info!(
+        "Accumulated workspace dependencies{}",
+        show_detached_dep_tree(&raw_workspace_feats, fg)
+    );
+    let members = {
+        let workspace_only_graph =
+            NodeFiltered::from_fn(&fg.features, |node| fg.features[node].is_workspace());
 
-            // all the "feature" nodes that belong to the workspace
-            let members_dfs_postorder = DfsPostOrder::new(&workspace_only_graph, fg.root)
-                .iter(&workspace_only_graph)
-                .collect::<Vec<_>>();
+        // all the "feature" nodes that belong to the workspace
+        let members_dfs_postorder = DfsPostOrder::new(&workspace_only_graph, fg.root)
+            .iter(&workspace_only_graph)
+            .collect::<Vec<_>>();
 
-            // only feature "roots" nodes, deduplicated
-            let mut res = Vec::new();
-            let mut seen = BTreeSet::new();
-            for member in members_dfs_postorder {
-                if let Some(pid) = fg.features[member].pid() {
-                    if seen.contains(&pid) {
-                        continue;
-                    }
-                    seen.insert(pid);
-
-                    let package = pid.package();
-                    let fid = if package.features.contains_key("default") {
-                        pid.named("default")
-                    } else {
-                        pid.base()
-                    };
-                    if let Some(&ix) = fg.fid_cache.get(&fid) {
-                        res.push((pid, ix));
-                    } else {
-                        warn!("unknown base in workspace: {fid:?}?");
-                    }
+        // only feature "roots" nodes, deduplicated
+        let mut res = Vec::new();
+        let mut seen = BTreeSet::new();
+        for member in members_dfs_postorder {
+            if let Some(pid) = fg.features[member].pid() {
+                if seen.contains(&pid) {
+                    continue;
                 }
-            }
-            res
-        };
+                seen.insert(pid);
 
-        for (member, member_ix) in members.iter().copied() {
-            info!("==== Checking {member:?}");
-
-            // For every workspace member we start collecting features it uses, similar to
-            // workspace_feats above
-
-            let mut dfs = Dfs::new(&fg.features, member_ix);
-            let mut deps_feats = BTreeMap::new();
-            'dependency: loop {
-                collect_features_from(&mut dfs, fg, &mut deps_feats, Collect::NoDev);
-
-                debug!(
-                    "Accumulated deps for {:?} are as following:{}",
-                    member.package().name,
-                    show_detached_dep_tree(&deps_feats, fg),
-                );
-
-                for (&dep, feats) in &deps_feats {
-                    if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                        if ws_feats != feats {
-                            if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                                info!("\t{member:?} lacks {}", fg.features[missing_feat]);
-
-                                changed
-                                    .entry(member)
-                                    .or_insert_with(BTreeMap::default)
-                                    .insert((Ty::Norm, dep), ws_feats.clone());
-
-                                let new_dep = fg.add_edge(
-                                    member_ix,
-                                    missing_feat,
-                                    false,
-                                    DepKindInfo::NORMAL,
-                                )?;
-                                dfs.move_to(new_dep);
-
-                                trace!("Performing one more iteration on {member:?}");
-                                continue 'dependency;
-                            }
-                        }
-                    }
-                }
-
-                break;
-            }
-
-            if no_dev {
-                continue;
-            }
-
-            // at this point dep_feats contains all the normal features used by {member}.
-            // we'll use it to filter dep dependencies if any.
-            if !member
-                .package()
-                .dependencies
-                .iter()
-                .any(|d| d.kind == cargo_metadata::DependencyKind::Development)
-            {
-                debug!("No dev dependencies for {member:?}, skipping");
-                continue;
-            }
-
-            let mut dfs = Dfs::new(&fg.features, member_ix);
-            let mut dev_feats = BTreeMap::new();
-            'dev_dependency: loop {
-                // DFS traverse of the current member and everything below it
-                collect_features_from(&mut dfs, fg, &mut dev_feats, Collect::MemberDev(member));
-
-                dev_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
-
-                debug!(
-                    "Accumulated dev deps for {:?} are as following:{}",
-                    member.package().name,
-                    show_detached_dep_tree(&dev_feats, fg),
-                );
-
-                for (&dep, feats) in &dev_feats {
-                    if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                        if ws_feats != feats {
-                            if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                                debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
-
-                                changed
-                                    .entry(member)
-                                    .or_insert_with(BTreeMap::default)
-                                    .insert((Ty::Dev, dep), ws_feats.clone());
-
-                                let new_dep =
-                                    fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
-                                dfs.move_to(new_dep);
-
-                                trace!("Performing one more dev iteration on {member:?}");
-                                continue 'dev_dependency;
-                            }
-                        }
-                    }
-                }
-
-                break;
-            }
-        }
-
-        // to do triggers we traverse from each triggering package, collect all the
-        // package dependencies and locally enabled features then look for
-        // triggers that satisfy the conditions and not enabled yet then add those,
-        // remove them from fg and do one more pass
-        let mut weak_deps = Vec::new();
-        for (pid, triggers) in &mut fg.triggers {
-            let mut local_fids = BTreeSet::new();
-
-            let mut remote_pids = BTreeSet::new();
-            let mut remote_fids = BTreeSet::new();
-
-            let sub = EdgeFiltered::from_fn(&fg.features, |edge| {
-                fg.features[edge.source()]
-                    .fid()
-                    .map_or(false, |fid| fid.pid == *pid)
-            });
-
-            for edge in sub.edge_references() {
-                if let Some(fid) = fg.features[edge.target()].fid() {
-                    if fid.pid == *pid {
-                        local_fids.insert(fid);
-                    } else {
-                        remote_pids.insert(fid.pid);
-                        remote_fids.insert(fid);
-                    }
-                }
-            }
-
-            if pid.package().features.contains_key("default") {
-                local_fids.insert(pid.named("default"));
-            }
-
-            triggers.retain(|trigger| {
-                if local_fids.contains(&trigger.feature) && remote_pids.contains(&trigger.weak_dep)
-                {
-                    if !remote_fids.contains(&trigger.weak_feat) {
-                        weak_deps.push((trigger.package, trigger.weak_feat));
-                    }
-                    false
+                let package = pid.package();
+                let fid = if package.features.contains_key("default") {
+                    pid.named("default")
                 } else {
-                    true
+                    pid.base()
+                };
+                if let Some(&ix) = fg.fid_cache.get(&fid) {
+                    res.push((pid, ix));
+                } else {
+                    warn!("unknown base in workspace: {fid:?}?");
                 }
-            });
+            }
         }
+        res
+    };
 
-        if weak_deps.is_empty() {
+    for (member, member_ix) in members.iter().copied() {
+        info!("==== Checking {member:?}");
+
+        // For every workspace member we start collecting features it uses, similar to
+        // workspace_feats above
+
+        let mut dfs = Dfs::new(&fg.features, member_ix);
+        let mut deps_feats = BTreeMap::new();
+        'dependency: loop {
+            collect_features_from(&mut dfs, fg, &mut deps_feats, Collect::NoDev);
+
+            debug!(
+                "Accumulated deps for {:?} are as following:{}",
+                member.package().name,
+                show_detached_dep_tree(&deps_feats, fg),
+            );
+
+            for (&dep, feats) in &deps_feats {
+                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
+                    if ws_feats != feats {
+                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
+                            info!("\t{member:?} lacks {}", fg.features[missing_feat]);
+
+                            changed
+                                .entry(member)
+                                .or_insert_with(BTreeMap::default)
+                                .insert((Ty::Norm, dep), ws_feats.clone());
+
+                            let new_dep =
+                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
+                            dfs.move_to(new_dep);
+
+                            trace!("Performing one more iteration on {member:?}");
+                            continue 'dependency;
+                        }
+                    }
+                }
+            }
+
             break;
         }
-        debug!("Weak dependencies add {} new links", weak_deps.len());
-        for (a, b) in weak_deps {
-            fg.add_edge(a, b, false, DepKindInfo::NORMAL)?;
+
+        if no_dev {
+            continue;
+        }
+
+        // at this point dep_feats contains all the normal features used by {member}.
+        // we'll use it to filter dep dependencies if any.
+        if !member
+            .package()
+            .dependencies
+            .iter()
+            .any(|d| d.kind == cargo_metadata::DependencyKind::Development)
+        {
+            debug!("No dev dependencies for {member:?}, skipping");
+            continue;
+        }
+
+        let mut dfs = Dfs::new(&fg.features, member_ix);
+        let mut dev_feats = BTreeMap::new();
+        'dev_dependency: loop {
+            // DFS traverse of the current member and everything below it
+            collect_features_from(&mut dfs, fg, &mut dev_feats, Collect::MemberDev(member));
+
+            dev_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
+
+            debug!(
+                "Accumulated dev deps for {:?} are as following:{}",
+                member.package().name,
+                show_detached_dep_tree(&dev_feats, fg),
+            );
+
+            for (&dep, feats) in &dev_feats {
+                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
+                    if ws_feats != feats {
+                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
+                            debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
+
+                            changed
+                                .entry(member)
+                                .or_insert_with(BTreeMap::default)
+                                .insert((Ty::Dev, dep), ws_feats.clone());
+
+                            let new_dep =
+                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
+                            dfs.move_to(new_dep);
+
+                            trace!("Performing one more dev iteration on {member:?}");
+                            continue 'dev_dependency;
+                        }
+                    }
+                }
+            }
+
+            break;
         }
     }
 
