@@ -422,7 +422,7 @@ package = 1.0
 
         let expected = r#"
 [dependencies]
-package = { version = "1.0.0", features = ["dummy"], default-features = false }
+package = { version = "1.0.0", features = ["dummy"] }
 
 [package.metadata.hackerman.stash.dependencies]
 package = 1.0
