@@ -152,7 +152,7 @@ fn compile_change_package(change: &ChangePackage) -> (Item, String) {
     if !feats.is_empty() {
         new.insert("features", Value::from(feats));
     }
-    if !change.feats.contains("default") {
+    if change.has_default && !change.feats.contains("default") {
         new.insert("default-features", Value::from(false));
     }
 
@@ -415,6 +415,7 @@ package = 1.0
             source: PackageSource::CRATES_IO,
             feats,
             rename: false,
+            has_default: false,
         }];
 
         set_dependencies_toml(&mut toml, false, &changes)?;

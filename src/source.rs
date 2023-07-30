@@ -117,6 +117,7 @@ impl<'a> ChangePackage<'a> {
         } = importee;
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
+        let has_default = importer.package().features.contains_key("default");
 
         if let Some(src) = &package.source {
             let source = PackageSource::try_from(src.repr.as_str())?;
@@ -127,6 +128,7 @@ impl<'a> ChangePackage<'a> {
                 source,
                 feats,
                 rename,
+                has_default,
             })
         } else {
             let source = match relative_import_dir(importer, importee) {
@@ -152,6 +154,7 @@ impl<'a> ChangePackage<'a> {
                 source,
                 feats,
                 rename,
+                has_default,
             })
         }
     }
@@ -172,6 +175,7 @@ pub struct ChangePackage<'a> {
     pub source: PackageSource<'a>,
     pub feats: BTreeSet<String>,
     pub rename: bool,
+    pub has_default: bool,
 }
 
 impl PackageSource<'_> {
