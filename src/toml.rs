@@ -233,12 +233,15 @@ fn set_dependencies_toml(
     for (name, val) in saved.norm {
         stash.insert(&name, val);
     }
+    stash.sort_values();
 
     let dev_stash = get_table(toml, DEV_STASH_PATH)?;
     dev_stash.set_position(999);
     for (name, val) in saved.dev {
         dev_stash.insert(&name, val);
     }
+
+    dev_stash.sort_values();
     if was_modified {
         add_banner(toml)?;
     }
