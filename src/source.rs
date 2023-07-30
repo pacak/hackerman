@@ -1,13 +1,13 @@
 use crate::{
     feat_graph::{FeatTarget, Pid},
-    hack::Ty,
+    hack::{FeatChange, Ty},
 };
 use cargo_metadata::camino::Utf8PathBuf;
 use semver::Version;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
-fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTreeSet<String>) {
+fn optimize_feats(declared: &BTreeMap<String, Vec<String>>, requested: &mut BTreeSet<String>) {
     let mut implicit = BTreeSet::new();
     for req in requested.iter() {
         for dep in declared.get(req).iter().flat_map(|x| x.iter()) {
@@ -23,9 +23,9 @@ fn optimize_feats(declared: &HashMap<String, Vec<String>>, requested: &mut BTree
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeSet, HashMap};
-
     use super::{optimize_feats, PackageSource};
+    use std::collections::{BTreeMap, BTreeSet};
+
     fn check(req: &[&str], decl: &[(&str, &[&str])], exp: &[&str]) {
         let mut requested = req
             .iter()
@@ -33,7 +33,7 @@ mod tests {
             .map(String::from)
             .collect::<BTreeSet<_>>();
 
-        let mut declared = HashMap::new();
+        let mut declared = BTreeMap::new();
         for (key, vals) in decl.iter() {
             declared.insert(
                 key.to_string(),
@@ -108,15 +108,16 @@ impl<'a> TryFrom<&'a str> for PackageSource<'a> {
 
 impl<'a> ChangePackage<'a> {
     #[allow(clippy::similar_names)]
-    pub fn make(
-        importer: Pid<'a>,
-        importee: Pid<'a>,
-        ty: Ty,
-        rename: bool,
-        mut feats: BTreeSet<String>,
-    ) -> anyhow::Result<Self> {
+    pub fn make(importer: Pid<'a>, importee: FeatChange<'a>) -> anyhow::Result<Self> {
+        let FeatChange {
+            pid: importee,
+            ty,
+            rename,
+            features: mut feats,
+        } = importee;
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
+        let has_default = importer.package().features.contains_key("default");
 
         if let Some(src) = &package.source {
             let source = PackageSource::try_from(src.repr.as_str())?;
@@ -127,6 +128,7 @@ impl<'a> ChangePackage<'a> {
                 source,
                 feats,
                 rename,
+                has_default,
             })
         } else {
             let source = match relative_import_dir(importer, importee) {
@@ -152,6 +154,7 @@ impl<'a> ChangePackage<'a> {
                 source,
                 feats,
                 rename,
+                has_default,
             })
         }
     }
@@ -172,6 +175,7 @@ pub struct ChangePackage<'a> {
     pub source: PackageSource<'a>,
     pub feats: BTreeSet<String>,
     pub rename: bool,
+    pub has_default: bool,
 }
 
 impl PackageSource<'_> {

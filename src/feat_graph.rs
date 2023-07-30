@@ -80,7 +80,7 @@ pub struct FeatGraph<'a> {
 
     pub platforms: Vec<&'a str>,
     pub cfgs: Vec<Cfg>,
-    pub triggers: BTreeMap<Pid<'a>, Vec<Trigger<'a>>>,
+    pub triggers: Vec<Trigger<'a>>,
 
     pub focus_nodes: Option<BTreeSet<NodeIndex>>,
     pub focus_edges: Option<BTreeSet<EdgeIndex>>,
@@ -95,15 +95,33 @@ impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
     }
 }
 
+impl<'a> Index<NodeIndex> for FeatGraph<'a> {
+    type Output = Fid<'a>;
+
+    fn index(&self, index: NodeIndex) -> &Self::Output {
+        match &self.features[index] {
+            Feature::Root => panic!("root node fid"),
+            Feature::Workspace(f) => f,
+            Feature::External(f) => f,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Trigger<'a> {
     // foo.toml:
     // [features]
-    // serde1 = ["dep:serde", "rgb?/serde"]
+    // serde = ["dep:serde", "rgb?/serde"]
     // when both `feature` and `weak_dep` are present we must include `to_add`
+    //
+    // In this example, enabling the serde feature will enable the serde
+    // dependency. It will also enable the serde feature for the rgb
+    // dependency, but only if something else has enabled the rgb
+    // dependency.
+    //
     pub package: Pid<'a>,   // foo
-    pub feature: Fid<'a>,   // serde1
-    pub weak_dep: Pid<'a>,  // rgb
+    pub feature: Fid<'a>,   // serde
+    pub weak_dep: Fid<'a>,  // rgb
     pub weak_feat: Fid<'a>, // rgb/serde
 }
 
@@ -178,7 +196,7 @@ impl<'a> FeatGraph<'a> {
             root,
             platforms,
             fids: BTreeMap::new(),
-            triggers: BTreeMap::new(),
+            triggers: Vec::new(),
             fid_cache: BTreeMap::new(),
             cache,
             meta,
@@ -394,13 +412,10 @@ impl<'a> FeatGraph<'a> {
                             let trigger = Trigger {
                                 package: this,
                                 feature: this.named(this_feat),
-                                weak_dep: dep,
+                                weak_dep: this.named(krate),
                                 weak_feat: dep.named(feat),
                             };
-                            self.triggers
-                                .entry(this)
-                                .or_insert_with(Vec::new)
-                                .push(trigger);
+                            self.triggers.push(trigger);
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
@@ -594,15 +609,12 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
                 let package = fid.pid.package();
                 fmt.push_str(&package.name);
 
-                match package.source.as_ref() {
-                    Some(src) => {
-                        if src.repr.starts_with("git") {
-                            fmt.push_str(" git");
-                        } else {
-                            fmt.push_str(&format!(" {}", package.version));
-                        }
+                if let Some(src) = package.source.as_ref() {
+                    if src.repr.starts_with("git") {
+                        fmt.push_str(" git");
+                    } else {
+                        fmt.push_str(&format!(" {}", package.version));
                     }
-                    None => {}
                 }
                 match fid.dep {
                     Feat::Base => {}

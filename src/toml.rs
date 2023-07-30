@@ -152,13 +152,14 @@ fn compile_change_package(change: &ChangePackage) -> (Item, String) {
     if !feats.is_empty() {
         new.insert("features", Value::from(feats));
     }
-    if !change.feats.contains("default") {
+    if change.has_default && !change.feats.contains("default") {
         new.insert("default-features", Value::from(false));
     }
 
     let new_name = if change.rename {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Hash::hash(&change.source, &mut hasher);
+        Hash::hash(&change.version, &mut hasher);
         let hash = Hasher::finish(&hasher);
         new.insert("package", Value::from(&change.name));
         format!("hackerman-{}-{}", &change.name, hash)
@@ -414,13 +415,14 @@ package = 1.0
             source: PackageSource::CRATES_IO,
             feats,
             rename: false,
+            has_default: false,
         }];
 
         set_dependencies_toml(&mut toml, false, &changes)?;
 
         let expected = r#"
 [dependencies]
-package = { version = "1.0.0", features = ["dummy"], default-features = false }
+package = { version = "1.0.0", features = ["dummy"] }
 
 [package.metadata.hackerman.stash.dependencies]
 package = 1.0

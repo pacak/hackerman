@@ -1,5 +1,9 @@
 # Change Log
 
+## [0.2.7] - 2023-07-27
+- use version to calculate deduplicated name
+- hack bugfixes
+
 ## [0.2.6] - 2023-07-13
 - Documentation overhaul
 - bump dependencies
