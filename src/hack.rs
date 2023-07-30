@@ -168,7 +168,6 @@ fn collect_features_from<M>(
 
             if let Some(dep) = to.get(&package) {
                 if dep.contains(&feature) && dep.contains(&weak_dep) && added.insert(weak_feat) {
-                    println!("Trigger fires {:?}", t);
                     to_visit.push(weak_feat);
                 }
             }
