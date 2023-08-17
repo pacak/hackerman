@@ -90,6 +90,7 @@ dependencies = [
  "pathdiff",
  "petgraph",
  "semver",
+ "serde",
  "serde_json",
  "target-spec",
  "tempfile",
