@@ -1,5 +1,12 @@
 # Change Log
 
+
+## [0.2.8] - 2023-08-27
+- refuse to hack already hacked files
+- better error messages for explain missing dependencies
+- hack bugfixes
+
+
 ## [0.2.7] - 2023-07-27
 - use version to calculate deduplicated name
 - hack bugfixes
