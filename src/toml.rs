@@ -53,6 +53,10 @@ fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
     let decor = get_decor(toml)?;
     match decor.prefix().and_then(|x| x.as_str()) {
         Some(old) => {
+            if old.starts_with(BANNER) {
+                anyhow::bail!("Found an old banner while trying to hack a file. You should restore it first before hacking againt");
+            }
+
             let new = format!("{BANNER}{old}");
             decor.set_prefix(new);
         }
