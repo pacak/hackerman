@@ -117,7 +117,9 @@ impl<'a> ChangePackage<'a> {
         } = importee;
         let package = importee.package();
         optimize_feats(&package.features, &mut feats);
-        let has_default = importer.package().features.contains_key("default");
+        // we care if package we are importing comes with the default key, not
+        // the package that imports
+        let has_default = importee.package().features.contains_key("default");
 
         if let Some(src) = &package.source {
             let source = PackageSource::try_from(src.repr.as_str())?;
