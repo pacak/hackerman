@@ -129,6 +129,10 @@ pub fn explain<'a>(
 
     info!("Found {} matching package(s)", packages.len());
 
+    if packages.is_empty() {
+        anyhow::bail!("Can't find crate {krate} with feature {feature:?} and version {version:?}");
+    }
+
     if package_nodes {
         fg.focus_targets = Some(
             packages
