@@ -117,6 +117,8 @@ fn show_detached_dep_tree(tree: &DetachedDepTree, fg: &FeatGraph) -> &'static st
 pub enum Collect<'a> {
     /// all targets, normal and builds
     AllTargets,
+    /// all targets, normal dependencies only
+    NormalOnly,
     /// current target only
     Target,
     /// current target only, normal and build dependencies globally, dev dependencies for workspace
@@ -149,6 +151,7 @@ fn collect_features_from<M>(
             Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
                 .weight()
                 .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
+            Collect::NormalOnly => e.weight().is_normal(),
         }
     });
 
@@ -156,7 +159,7 @@ fn collect_features_from<M>(
         while let Some(ix) = dfs.next(&g) {
             if let Some(fid) = fg.features[ix].fid() {
                 if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
-                    to.entry(*parent).or_insert_with(BTreeSet::new).insert(ix);
+                    to.entry(*parent).or_default().insert(ix);
                 }
             }
         }
@@ -223,7 +226,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         &mut Dfs::new(&fg.features, fg.root),
         fg,
         &mut raw_workspace_feats,
-        Collect::AllTargets,
+        Collect::NormalOnly,
     );
 
     // For reasons unknown cargo resolves dependencies for all the targets including those
