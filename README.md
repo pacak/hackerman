@@ -176,7 +176,7 @@ sequentially
   * [`cargo hackerman tree`↴](#cargo-hackerman-tree)
   * [`cargo hackerman show`↴](#cargo-hackerman-show)
 
-# cargo hackerman
+## cargo hackerman
 
 A collection of tools that help your workspace to compile fast
 
@@ -213,7 +213,7 @@ A collection of tools that help your workspace to compile fast
 You can pass **`--help`** twice for more detailed help
 
 
-# cargo hackerman hack
+## cargo hackerman hack
 
 Unify crate dependencies across individual crates in the workspace
 
@@ -263,7 +263,7 @@ You can undo those changes using `cargo hackerman restore`.
 Once dependencies are hacked you should restore them before making any changes.
 
 
-# cargo hackerman restore
+## cargo hackerman restore
 
 Remove crate dependency unification added by the `hack` command
 
@@ -294,7 +294,7 @@ Remove crate dependency unification added by the `hack` command
   Prints help information
 
 
-# cargo hackerman check
+## cargo hackerman check
 
 Check if unification is required and if checksums are correct
 
@@ -323,7 +323,7 @@ Similar to `cargo-hackerman hack --dry`, but also sets exit status to 1 so you c
   Prints help information
 
 
-# cargo hackerman merge
+## cargo hackerman merge
 
 Restore files and merge with the default merge driver
 
@@ -350,7 +350,7 @@ And something like this to `.git/gitattributes`
   Cargo.toml merge=hackerman
   ```
 
-# cargo hackerman explain
+## cargo hackerman explain
 
 Explain why some dependency is present. Both feature and version are optional
 
@@ -393,7 +393,7 @@ If a crate is present in several versions you can specify version of the one you
 You can also specify which feature to look for, otherwise hackerman will be looking for all of them.
 
 
-# cargo hackerman dupes
+## cargo hackerman dupes
 
 Lists all the duplicates in the workspace
 
@@ -418,7 +418,7 @@ Lists all the duplicates in the workspace
   Prints help information
 
 
-# cargo hackerman tree
+## cargo hackerman tree
 
 Make a tree out of dependencies
 
@@ -461,7 +461,7 @@ Examples:
   cargo hackerman tree serde_json preserve_order
   ```
 
-# cargo hackerman show
+## cargo hackerman show
 
 Show crate manifest, readme, repository or documentation
 

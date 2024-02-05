@@ -52,7 +52,9 @@ impl DepKindInfo {
     ) -> bool {
         if self.kind == DependencyKind::Development {
             match filter {
-                Collect::AllTargets | Collect::Target | Collect::NoDev => return false,
+                Collect::AllTargets | Collect::Target | Collect::NoDev | Collect::NormalOnly => {
+                    return false
+                }
                 Collect::MemberDev(pid) => {
                     if let Some(this_fid) = source.fid() {
                         {
@@ -109,6 +111,9 @@ impl Link {
         self.kinds
             .iter()
             .all(|k| k.kind == DependencyKind::Development)
+    }
+    pub(crate) fn is_normal(&self) -> bool {
+        self.kinds.iter().any(|k| k.kind == DependencyKind::Normal)
     }
 
     pub(crate) fn satisfies(

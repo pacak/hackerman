@@ -1,5 +1,8 @@
 # Change Log
 
+## [0.2.9] - 2024-02-05
+- Features of build dependencies should not be unified with normal dependencies
+- bump bpaf
 
 ## [0.2.8] - 2023-08-27
 - refuse to hack already hacked files
