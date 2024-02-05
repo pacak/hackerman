@@ -18,7 +18,7 @@ dot = "0.1.4"
 pathdiff = { version = "0.2", features = ["camino"] }
 petgraph = "0.6.0"
 semver = "1.0"
-serde = "<=1.0.171"
+serde = "=1.0.196"
 serde_json = "1.0"
 target-spec = "3.0"
 tempfile = { version = "3.3.0" }
