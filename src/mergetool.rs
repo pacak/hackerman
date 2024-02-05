@@ -27,7 +27,7 @@ pub fn merge(base: &Path, local: &Path, remote: &Path, _merged: &Path) -> anyhow
     let merged_bytes = output.stdout;
     let code = output.status;
 
-    std::fs::write(local, &merged_bytes)?;
+    std::fs::write(local, merged_bytes)?;
 
     std::process::exit(code.code().unwrap_or(-1));
 }

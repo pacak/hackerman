@@ -510,7 +510,7 @@ impl<'a> Eq for Pid<'a> {}
 
 impl<'a> PartialOrd for Pid<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
     }
 }
 
@@ -753,6 +753,17 @@ impl<'a> From<&'a str> for FeatTarget<'a> {
     }
 }
 
+impl Fid<'_> {
+    #[must_use]
+    /// Create a base feature from possibly named one
+    pub const fn get_base(&self) -> Self {
+        Self {
+            dep: Feat::Base,
+            ..*self
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -827,15 +838,5 @@ mod test {
 
             Ok(())
         })
-    }
-}
-impl Fid<'_> {
-    #[must_use]
-    /// Create a base feature from possibly named one
-    pub const fn get_base(&self) -> Self {
-        Self {
-            dep: Feat::Base,
-            ..*self
-        }
     }
 }
