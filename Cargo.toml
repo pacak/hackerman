@@ -13,7 +13,7 @@ exclude = ["TODO", "test_workspaces"]
 anyhow = "1.0.52"
 bpaf = { version = "0.9.9", features = ["derive", "autocomplete", "docgen"] }
 cargo-platform = "0.1"
-cargo_metadata = { version = "0.17" }
+cargo_metadata = { version = "0.18" }
 dot = "0.1.4"
 pathdiff = { version = "0.2", features = ["camino"] }
 petgraph = "0.6.0"
