@@ -47,8 +47,8 @@ impl<'a> Feature<'a> {
 
     #[must_use]
     pub fn package_id(&self) -> Option<&PackageId> {
-        let Pid(pid, meta) = self.pid()?;
-        Some(&meta.packages[pid].id)
+        let Pid { key, metadata } = self.pid()?;
+        Some(&metadata.packages[key].id)
     }
 
     #[must_use]
@@ -76,7 +76,7 @@ pub struct FeatGraph<'a> {
     pub fid_cache: BTreeMap<Fid<'a>, NodeIndex>,
 
     /// cargo metadata
-    meta: &'a Metadata,
+    metadata: &'a Metadata,
 
     pub platforms: Vec<&'a str>,
     pub cfgs: Vec<Cfg>,
@@ -167,26 +167,26 @@ impl<'a> FeatGraph<'a> {
     }
 
     pub fn init(
-        meta: &'a Metadata,
+        metadata: &'a Metadata,
         platforms: Vec<&'a str>,
         cfgs: Vec<Cfg>,
     ) -> anyhow::Result<Self> {
-        if meta.resolve.is_none() {
+        if metadata.resolve.is_none() {
             anyhow::bail!("Cargo couldn't produce resolved dependencies")
         }
 
-        let cache = meta
+        let cache = metadata
             .packages
             .iter()
             .enumerate()
-            .map(|(ix, package)| (&package.id, Pid(ix, meta)))
+            .map(|(key, package)| (&package.id, Pid { key, metadata }))
             .collect::<BTreeMap<_, _>>();
 
         let mut features = Graph::new();
         let root = features.add_node(Feature::Root);
 
         let mut graph = Self {
-            workspace_members: meta
+            workspace_members: metadata
                 .workspace_members
                 .iter()
                 .filter_map(|pid| cache.get(pid))
@@ -199,15 +199,15 @@ impl<'a> FeatGraph<'a> {
             triggers: Vec::new(),
             fid_cache: BTreeMap::new(),
             cache,
-            meta,
+            metadata,
             cfgs,
             focus_nodes: None,
             focus_edges: None,
             focus_targets: None,
         };
 
-        for (ix, package) in meta.packages.iter().enumerate() {
-            graph.add_package(ix, package, &meta.packages)?;
+        for (ix, package) in metadata.packages.iter().enumerate() {
+            graph.add_package(ix, package, &metadata.packages)?;
         }
 
         graph.rebuild_cache()?;
@@ -294,12 +294,15 @@ impl<'a> FeatGraph<'a> {
 
     fn add_package(
         &mut self,
-        ix: usize,
+        key: usize,
         package: &'a Package,
         packages: &'a [Package],
     ) -> anyhow::Result<()> {
         debug!("== adding package {}", package.id);
-        let this = Pid(ix, self.meta);
+        let this = Pid {
+            key,
+            metadata: self.metadata,
+        };
         let base_ix = self.fid_index(this.base());
 
         let workspace_member = self.workspace_members.contains(&this);
@@ -465,12 +468,16 @@ impl<'a> FeatGraph<'a> {
 }
 
 #[derive(Copy, Clone)]
-pub struct Pid<'a>(usize, &'a Metadata);
+pub struct Pid<'a> {
+    /// key for this package in cargo metadata index
+    key: usize,
+    metadata: &'a Metadata,
+}
 
 impl<'a> Pid<'a> {
     #[must_use]
     pub fn package(self) -> &'a cargo_metadata::Package {
-        &self.1.packages[self.0]
+        &self.metadata.packages[self.key]
     }
 }
 
@@ -502,7 +509,7 @@ impl<'a> Pid<'a> {
 
 impl<'a> PartialEq for Pid<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.key == other.key
     }
 }
 
@@ -516,14 +523,14 @@ impl<'a> PartialOrd for Pid<'a> {
 
 impl<'a> Ord for Pid<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
+        self.key.cmp(&other.key)
     }
 }
 
 impl std::fmt::Debug for Pid<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let meta = &self.1.packages[self.0];
-        write!(f, "Pid({} / {})", self.0, meta.id)
+        let meta = &self.metadata.packages[self.key];
+        write!(f, "Pid({} / {})", self.key, meta.id)
     }
 }
 
