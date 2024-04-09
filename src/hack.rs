@@ -212,6 +212,16 @@ impl std::fmt::Display for Ty {
 pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result<FeatChanges<'a>> {
     info!("==== Calculating changeset for hack");
 
+    // minimal feature unification:
+    //
+    // 1. collect superset of all the features enabled on a workspace as a whole, separately normal
+    //    and build (proc macro) dependencies
+    //
+    // 2. for every workspace member, starting from leaves look for all their dependencies. For
+    //    every dependency crate, look for features not present on that crate but present in the
+    //    workspace. Add this dependency directly to current workspace member with missing
+    //    workspace features enabled
+
     //    dump(fg)?;
     let mut changed = BTreeMap::new();
     //    loop {
