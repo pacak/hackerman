@@ -269,7 +269,7 @@ fn open_url(url: &str) -> anyhow::Result<()> {
     } else if cfg!(target_os = "windows") {
         Command::new("start").arg(url).output()?;
     } else {
-        #[cfg(feature = "webbroser")]
+        #[cfg(feature = "webbrowser")]
         {
             webbrowser::open(url)?;
             return Ok(());
