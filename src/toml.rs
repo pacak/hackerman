@@ -5,7 +5,7 @@ use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use std::hash::{Hash, Hasher};
 use std::ops::{Index, IndexMut};
 use std::path::Path;
-use toml_edit::{value, Array, Decor, Document, InlineTable, Item, Table, Value};
+use toml_edit::{Array, Decor, Document, InlineTable, Item, Table, Value, value};
 use tracing::{debug, info};
 
 use crate::hack::Ty;
@@ -54,7 +54,9 @@ fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
     match decor.prefix().and_then(|x| x.as_str()) {
         Some(old) => {
             if old.starts_with(BANNER) {
-                anyhow::bail!("Found an old banner while trying to hack a file. You should restore it first before hacking againt");
+                anyhow::bail!(
+                    "Found an old banner while trying to hack a file. You should restore it first before hacking againt"
+                );
             }
 
             let new = format!("{BANNER}{old}");
@@ -206,7 +208,9 @@ fn set_dependencies_toml(
 ) -> anyhow::Result<bool> {
     let mut was_modified = false;
     if toml.contains_key("target") {
-        anyhow::bail!("target filtered dependencies present in the workspace are not supported by split mode hack")
+        anyhow::bail!(
+            "target filtered dependencies present in the workspace are not supported by split mode hack"
+        )
     }
     let mut saved = Stash::default();
 
@@ -314,11 +318,7 @@ pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
     if lock_table.is_empty() {
         return Ok(());
     }
-    if lock_table
-        .get("dependencies")
-        .and_then(Item::as_integer)
-        .map_or(false, |l| l == checksum)
-    {
+    if lock_table.get("dependencies").and_then(Item::as_integer) == Some(checksum) {
         anyhow::bail!("Checksum mismatch in {manifest_path:?}")
     }
 
@@ -440,30 +440,30 @@ package = 1.0
         Ok(())
     }
     /*
-        #[test]
-        fn set_dependencies_works_1() -> anyhow::Result<()> {
-            let mut toml = r#"
+    #[test]
+    fn set_dependencies_works_1() -> anyhow::Result<()> {
+        let mut toml = r#"
     [target.'cfg(target_os = "linux")'.dependencies]
     package = 1.0
     "#
-            .parse::<Document>()?;
+        .parse::<Document>()?;
 
-            let mut feats = BTreeSet::new();
-            feats.insert("dummy".to_string());
+        let mut feats = BTreeSet::new();
+        feats.insert("dummy".to_string());
 
-            let changes = [ChangePackage {
-                name: "package".to_string(),
-                ty: Ty::Norm,
-                version: Version::new(1, 0, 0),
-                source: PackageSource::CRATES_IO,
-                feats,
-                rename: false,
-            }];
+        let changes = [ChangePackage {
+            name: "package".to_string(),
+            ty: Ty::Norm,
+            version: Version::new(1, 0, 0),
+            source: PackageSource::CRATES_IO,
+            feats,
+            rename: false,
+        }];
 
-            set_dependencies_toml(&mut toml, false, &changes)?;
+        set_dependencies_toml(&mut toml, false, &changes)?;
 
-            todo!("{toml}");
+        todo!("{toml}");
 
-            Ok(())
-        }*/
+        Ok(())
+    }*/
 }

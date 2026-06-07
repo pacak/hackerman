@@ -3,9 +3,9 @@ use crate::metadata::{DepKindInfo, Link};
 use cargo_metadata::{Metadata, Package, PackageId, Source};
 use cargo_platform::Cfg;
 use dot::{GraphWalk, Labeller};
+use petgraph::Graph;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef};
-use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Index;
@@ -326,7 +326,9 @@ impl<'a> FeatGraph<'a> {
                     if &a.repr == b || (a.repr.starts_with("git") && a.repr.starts_with(b)) {
                         true
                     } else {
-                        trace!("ignoring a candidate {package:?} for {dep:?} due to source mismatch: {a:?} != {b:?}");
+                        trace!(
+                            "ignoring a candidate {package:?} for {dep:?} due to source mismatch: {a:?} != {b:?}"
+                        );
                         false
                     }
                 }

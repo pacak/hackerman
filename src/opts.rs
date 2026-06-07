@@ -1,4 +1,4 @@
-use bpaf::{doc::Style, positional, short, Bpaf, Parser};
+use bpaf::{Bpaf, Parser, doc::Style, positional, short};
 use cargo_metadata::Metadata;
 use semver::Version;
 use std::{path::PathBuf, str::FromStr};

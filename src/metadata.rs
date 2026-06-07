@@ -53,7 +53,7 @@ impl DepKindInfo {
         if self.kind == DependencyKind::Development {
             match filter {
                 Collect::AllTargets | Collect::Target | Collect::NoDev | Collect::NormalOnly => {
-                    return false
+                    return false;
                 }
                 Collect::MemberDev(pid) => {
                     if let Some(this_fid) = source.fid() {
@@ -74,7 +74,7 @@ impl DepKindInfo {
 
         self.target
             .as_ref()
-            .map_or(true, |p| p.matches(platforms[0], cfgs))
+            .is_none_or(|p| p.matches(platforms[0], cfgs))
     }
 }
 

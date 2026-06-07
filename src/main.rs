@@ -15,11 +15,11 @@ use std::{
     str::FromStr,
 };
 use tracing::Level;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn start_subscriber((_, level): (usize, Level)) {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| (EnvFilter::default().add_directive(level.into())));
+        .unwrap_or_else(|_| EnvFilter::default().add_directive(level.into()));
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .without_time()
@@ -180,10 +180,7 @@ fn main() -> anyhow::Result<()> {
                 .packages
                 .iter()
                 .find(|p| {
-                    p.name == krate
-                        && version
-                            .as_ref()
-                            .map_or(true, |v| &p.version.to_string() == v)
+                    p.name == krate && version.as_ref().is_none_or(|v| &p.version.to_string() == v)
                 })
                 .ok_or_else(|| anyhow::anyhow!("{krate} {version:?} is not used"))?;
 

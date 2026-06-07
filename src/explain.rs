@@ -28,7 +28,7 @@ fn collect_packages(
                 // version must match if given
                 package.name == krate
                     && feature.map_or(fid.pid.base() == fid, |f| fid.pid.named(f) == fid)
-                    && version.map_or(true, |v| package.version == *v)
+                    && version.is_none_or(|v| package.version == *v)
             } else {
                 false
             }

@@ -157,10 +157,10 @@ fn collect_features_from<M>(
 
     loop {
         while let Some(ix) = dfs.next(&g) {
-            if let Some(fid) = fg.features[ix].fid() {
-                if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
-                    to.entry(*parent).or_default().insert(ix);
-                }
+            if let Some(fid) = fg.features[ix].fid()
+                && let Some(parent) = fg.fid_cache.get(&fid.get_base())
+            {
+                to.entry(*parent).or_default().insert(ix);
             }
         }
         for t in fg.triggers.iter() {
@@ -169,10 +169,12 @@ fn collect_features_from<M>(
             let weak_dep = fg.fid_cache[&t.weak_dep];
             let weak_feat = fg.fid_cache[&t.weak_feat];
 
-            if let Some(dep) = to.get(&package) {
-                if dep.contains(&feature) && dep.contains(&weak_dep) && added.insert(weak_feat) {
-                    to_visit.push(weak_feat);
-                }
+            if let Some(dep) = to.get(&package)
+                && dep.contains(&feature)
+                && dep.contains(&weak_dep)
+                && added.insert(weak_feat)
+            {
+                to_visit.push(weak_feat);
             }
         }
 
@@ -309,24 +311,23 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             );
 
             for (&dep, feats) in &deps_feats {
-                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                    if ws_feats != feats {
-                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                            info!("\t{member:?} lacks {}", fg.features[missing_feat]);
+                if let Some(ws_feats) = raw_workspace_feats.get(&dep)
+                    && ws_feats != feats
+                    && let Some(&missing_feat) = ws_feats.difference(feats).next()
+                {
+                    info!("\t{member:?} lacks {}", fg.features[missing_feat]);
 
-                            changed
-                                .entry(member)
-                                .or_insert_with(BTreeMap::default)
-                                .insert((Ty::Norm, dep), ws_feats.clone());
+                    changed
+                        .entry(member)
+                        .or_insert_with(BTreeMap::default)
+                        .insert((Ty::Norm, dep), ws_feats.clone());
 
-                            let new_dep =
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
-                            dfs.move_to(new_dep);
+                    let new_dep =
+                        fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
+                    dfs.move_to(new_dep);
 
-                            trace!("Performing one more iteration on {member:?}");
-                            continue 'dependency;
-                        }
-                    }
+                    trace!("Performing one more iteration on {member:?}");
+                    continue 'dependency;
                 }
             }
 
@@ -364,24 +365,22 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             );
 
             for (&dep, feats) in &dev_feats {
-                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                    if ws_feats != feats {
-                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                            debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
+                if let Some(ws_feats) = raw_workspace_feats.get(&dep)
+                    && ws_feats != feats
+                    && let Some(&missing_feat) = ws_feats.difference(feats).next()
+                {
+                    debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
 
-                            changed
-                                .entry(member)
-                                .or_insert_with(BTreeMap::default)
-                                .insert((Ty::Dev, dep), ws_feats.clone());
+                    changed
+                        .entry(member)
+                        .or_insert_with(BTreeMap::default)
+                        .insert((Ty::Dev, dep), ws_feats.clone());
 
-                            let new_dep =
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
-                            dfs.move_to(new_dep);
+                    let new_dep = fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
+                    dfs.move_to(new_dep);
 
-                            trace!("Performing one more dev iteration on {member:?}");
-                            continue 'dev_dependency;
-                        }
-                    }
+                    trace!("Performing one more dev iteration on {member:?}");
+                    continue 'dev_dependency;
                 }
             }
 
@@ -442,7 +441,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                         .collect::<BTreeSet<_>>();
                     let rename = renames
                         .get(&pid)
-                        .map_or(false, |names| names.contains(&package.package().name));
+                        .is_some_and(|names| names.contains(&package.package().name));
                     Some(FeatChange {
                         pid: package,
                         ty,

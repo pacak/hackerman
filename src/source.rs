@@ -23,7 +23,7 @@ fn optimize_feats(declared: &BTreeMap<String, Vec<String>>, requested: &mut BTre
 
 #[cfg(test)]
 mod tests {
-    use super::{optimize_feats, PackageSource};
+    use super::{PackageSource, optimize_feats};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn check(req: &[&str], decl: &[(&str, &[&str])], exp: &[&str]) {
