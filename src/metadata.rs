@@ -55,7 +55,7 @@ impl DepKindInfo {
                 Collect::AllTargets | Collect::Target | Collect::NoDev | Collect::NormalOnly => {
                     return false;
                 }
-                Collect::MemberDev(pid) => {
+                Collect::MemberBuild(pid) => {
                     if let Some(this_fid) = source.fid() {
                         {
                             if this_fid.pid != pid {

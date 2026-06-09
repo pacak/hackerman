@@ -178,7 +178,7 @@ fn compile_change_package(change: &ChangePackage) -> (Item, String) {
 #[derive(Default)]
 struct Stash {
     norm: Vec<(String, Item)>,
-    dev: Vec<(String, Item)>,
+    build: Vec<(String, Item)>,
 }
 
 impl Index<Ty> for Stash {
@@ -186,7 +186,7 @@ impl Index<Ty> for Stash {
 
     fn index(&self, index: Ty) -> &Self::Output {
         match index {
-            Ty::Dev => &self.dev,
+            Ty::Build => &self.build,
             Ty::Norm => &self.norm,
         }
     }
@@ -195,7 +195,7 @@ impl Index<Ty> for Stash {
 impl IndexMut<Ty> for Stash {
     fn index_mut(&mut self, index: Ty) -> &mut Self::Output {
         match index {
-            Ty::Dev => &mut self.dev,
+            Ty::Build => &mut self.build,
             Ty::Norm => &mut self.norm,
         }
     }
@@ -221,7 +221,7 @@ fn set_dependencies_toml(
         let old = table.insert(&name, item).unwrap_or_else(|| value(false));
         saved[change.ty].push((name, old));
     }
-    for &ty in &[Ty::Norm, Ty::Dev] {
+    for &ty in &[Ty::Norm, Ty::Build] {
         if !saved[ty].is_empty() {
             get_table(toml, &[ty.table_name()])?.sort_values();
         }
@@ -245,7 +245,7 @@ fn set_dependencies_toml(
 
     let dev_stash = get_table(toml, DEV_STASH_PATH)?;
     dev_stash.set_position(999);
-    for (name, val) in saved.dev {
+    for (name, val) in saved.build {
         dev_stash.insert(&name, val);
     }
 

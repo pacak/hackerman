@@ -47,18 +47,13 @@ fn main() -> anyhow::Result<()> {
     let action = opts::action().fallback_to_usage().run();
 
     match action {
-        Action::Hack {
-            profile,
-            dry,
-            lock,
-            no_dev,
-        } => {
+        Action::Hack { profile, dry, lock } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
             let platform = target_spec::Platform::current()?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(dry, lock, no_dev, &metadata, triplets, cfgs)?;
+            hack(dry, lock, &metadata, triplets, cfgs)?;
 
             // regenerate Cargo.lock file
             if !dry {
@@ -89,7 +84,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Action::Check { profile, no_dev } => {
+        Action::Check { profile } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
             let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
@@ -101,7 +96,7 @@ fn main() -> anyhow::Result<()> {
             let platform = target_spec::Platform::current()?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(true, false, no_dev, &metadata, triplets, cfgs)?;
+            hack(true, false, &metadata, triplets, cfgs)?;
         }
 
         Action::MergeDriver {

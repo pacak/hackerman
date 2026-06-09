@@ -23,16 +23,14 @@ fn force_config(var: &mut bool, name: &str, meta: &serde_json::Value) -> Option<
 pub fn hack(
     dry: bool,
     mut lock: bool,
-    mut no_dev: bool,
     meta: &Metadata,
     triplets: Vec<&str>,
     cfgs: Vec<Cfg>,
 ) -> anyhow::Result<bool> {
     force_config(&mut lock, "lock", &meta.workspace_metadata);
-    force_config(&mut no_dev, "no-dev", &meta.workspace_metadata);
 
     let mut fg = FeatGraph::init(meta, triplets, cfgs)?;
-    let changeset = get_changeset(&mut fg, no_dev)?;
+    let changeset = get_changeset(&mut fg)?;
     let has_changes = !changeset.is_empty();
 
     if dry {
@@ -55,7 +53,7 @@ pub fn hack(
             println!("{path}");
             for change in changeset {
                 let t = match change.ty {
-                    Ty::Dev => "dev ",
+                    Ty::Build => "dev ",
                     Ty::Norm => "",
                 };
                 println!(
@@ -124,7 +122,7 @@ pub enum Collect<'a> {
     /// current target only, normal and build dependencies globally, dev dependencies for workspace
     DevTarget,
     NoDev,
-    MemberDev(Pid<'a>),
+    MemberBuild(Pid<'a>),
 }
 
 // we are doing 4 types of passes:
@@ -148,7 +146,7 @@ fn collect_features_from<M>(
         // last_edge.set(Some(e));
         match filter {
             Collect::AllTargets => true,
-            Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
+            Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberBuild(_) => e
                 .weight()
                 .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
             Collect::NormalOnly => e.weight().is_normal(),
@@ -188,7 +186,7 @@ fn collect_features_from<M>(
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Ty {
-    Dev,
+    Build,
     Norm,
 }
 
@@ -196,7 +194,7 @@ impl Ty {
     #[must_use]
     pub const fn table_name(&self) -> &'static str {
         match self {
-            Ty::Dev => "dev-dependencies",
+            Ty::Build => "build-dependencies",
             Ty::Norm => "dependencies",
         }
     }
@@ -205,13 +203,13 @@ impl Ty {
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::Dev => f.write_str("dev"),
+            Ty::Build => f.write_str("build"),
             Ty::Norm => f.write_str("norm"),
         }
     }
 }
 
-pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result<FeatChanges<'a>> {
+pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'a>> {
     info!("==== Calculating changeset for hack");
 
     // minimal feature unification:
@@ -334,37 +332,33 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             break;
         }
 
-        if no_dev {
-            continue;
-        }
-
         // at this point dep_feats contains all the normal features used by {member}.
         // we'll use it to filter dep dependencies if any.
         if !member
             .package()
             .dependencies
             .iter()
-            .any(|d| d.kind == cargo_metadata::DependencyKind::Development)
+            .any(|d| d.kind == cargo_metadata::DependencyKind::Build)
         {
-            debug!("No dev dependencies for {member:?}, skipping");
+            debug!("No build dependencies for {member:?}, skipping");
             continue;
         }
 
         let mut dfs = Dfs::new(&fg.features, member_ix);
-        let mut dev_feats = BTreeMap::new();
-        'dev_dependency: loop {
+        let mut build_feats = BTreeMap::new();
+        'build_dependency: loop {
             // DFS traverse of the current member and everything below it
-            collect_features_from(&mut dfs, fg, &mut dev_feats, Collect::MemberDev(member));
+            collect_features_from(&mut dfs, fg, &mut build_feats, Collect::MemberBuild(member));
 
-            dev_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
+            build_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
 
             debug!(
                 "Accumulated dev deps for {:?} are as following:{}",
                 member.package().name,
-                show_detached_dep_tree(&dev_feats, fg),
+                show_detached_dep_tree(&build_feats, fg),
             );
 
-            for (&dep, feats) in &dev_feats {
+            for (&dep, feats) in &build_feats {
                 if let Some(ws_feats) = raw_workspace_feats.get(&dep)
                     && ws_feats != feats
                     && let Some(&missing_feat) = ws_feats.difference(feats).next()
@@ -374,13 +368,13 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                     changed
                         .entry(member)
                         .or_insert_with(BTreeMap::default)
-                        .insert((Ty::Dev, dep), ws_feats.clone());
+                        .insert((Ty::Build, dep), ws_feats.clone());
 
                     let new_dep = fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
                     dfs.move_to(new_dep);
 
                     trace!("Performing one more dev iteration on {member:?}");
-                    continue 'dev_dependency;
+                    continue 'build_dependency;
                 }
             }
 
