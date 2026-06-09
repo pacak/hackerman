@@ -1,0 +1,48 @@
+# Workspace C: Host vs Target Dependency Isolation
+#
+# Tests: host (build) dependencies are NOT unified with target (normal) dependencies
+#
+# - alpha has normal dep on codec with features ["decode"]
+# - alpha has build-dep on codec with features ["encode"]
+# - beta has normal dep on codec with features ["encode", "optimize"]
+# - beta has build-dep on codec with features ["decode"]
+# - gamma has normal dep on codec and dev-dep on codec with different features
+#
+# Resolution:
+# - Normal codec (target): features ["decode", "encode", "optimize"] unified
+# - Build codec (host): features ["encode", "decode"] unified (separate from normal)
+# - Dev codec (host): features ["test"] (separate from normal)
+#
+# proc-macro deps also run on host and don't unify with target deps
+
+[workspace]
+name = "unify_host_target"
+
+[[crates]]
+name = "codec"
+features = { decode = [], encode = [], optimize = [], test = [], serialize = [] }
+
+[[crates]]
+name = "alpha"
+dependencies = { codec = { features = ["decode"] } }
+build_dependencies = { codec = { features = ["encode"] } }
+
+[[crates]]
+name = "beta"
+dependencies = { codec = { features = ["encode", "optimize"] } }
+build_dependencies = { codec = { features = ["decode"] } }
+
+[[crates]]
+name = "gamma"
+dependencies = { codec = { features = ["decode"] } }
+dev_dependencies = { codec = { features = ["test"] } }
+
+# proc-macro crate runs on host, its deps don't unify with target deps
+[[crates]]
+name = "macro-helper"
+proc_macro = true
+dependencies = { codec = { features = ["serialize"] } }
+
+[[crates]]
+name = "app"
+dependencies = { codec = { features = ["decode", "optimize"] }, macro-helper = {} }

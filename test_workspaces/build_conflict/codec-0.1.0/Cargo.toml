@@ -1,0 +1,11 @@
+[package]
+name = "codec"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+decode = []
+encode = []
+optimize = []
+serialize = []
+test = []

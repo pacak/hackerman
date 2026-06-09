@@ -1,0 +1,11 @@
+[package]
+name = "workspace-gen"
+version = "0.1.0"
+edition = "2024"
+description = "Generate cargo workspaces for testing purposes"
+
+[dependencies]
+anyhow = "1"
+bpaf = { version = "0.9", features = ["derive"] }
+toml = "1.0"
+serde = { version = "1", features = ["derive"] }

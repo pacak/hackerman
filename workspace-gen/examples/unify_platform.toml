@@ -1,0 +1,42 @@
+# Workspace B: Platform-Specific Dependency Isolation
+#
+# Tests: platform specific dependencies are unified with each other,
+# but NOT with regular target dependencies
+#
+# - alpha depends on widget with features ["base"] (regular)
+# - alpha depends on widget with features ["android"] (platform-specific, cfg(target_os = "android"))
+# - beta depends on widget with features ["base", "extra"] (regular)
+# - beta depends on widget with features ["ios"] (platform-specific, cfg(target_os = "ios"))
+#
+# Resolution:
+# - Regular widget: features ["base", "extra"] unified across alpha and beta
+# - Android widget: features ["android"] (only from alpha)
+# - iOS widget: features ["ios"] (only from beta)
+# - Platform and regular do NOT unify with each other
+
+[workspace]
+name = "unify_platform"
+
+[[crates]]
+name = "widget"
+features = { base = [], extra = [], android = [], ios = [], desktop = [] }
+
+[[crates]]
+name = "alpha"
+dependencies = { widget = { features = ["base"] } }
+
+[[crates.platform]]
+target = 'cfg(target_os = "android")'
+dependencies = { widget = { features = ["android"] } }
+
+[[crates]]
+name = "beta"
+dependencies = { widget = { features = ["base", "extra"] } }
+
+[[crates.platform]]
+target = 'cfg(target_os = "ios")'
+dependencies = { widget = { features = ["ios"] } }
+
+[[crates.platform]]
+target = 'cfg(target_os = "android")'
+dependencies = { widget = { features = ["extra"] } }

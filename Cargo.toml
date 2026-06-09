@@ -32,3 +32,6 @@ webbrowser = { version = "0.8.10", optional = true }
 bright-color = ["bpaf/bright-color"]
 default = ["dull-color"]
 dull-color = ["bpaf/dull-color"]
+
+[workspace]
+members = ["./workspace-gen"]

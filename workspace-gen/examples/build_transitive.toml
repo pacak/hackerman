@@ -1,0 +1,48 @@
+# Workspace: Transitive Build Dependency Feature Mismatch
+#
+# Tests: build dependencies that are transitively reachable through normal
+# dependency chains should be detected when features differ across members.
+#
+# Structure:
+#   alpha (member) --normal--> lib_sqlite --BUILD--> cc (no "parallel")
+#   beta  (member) --normal--> lib_aws    --BUILD--> cmake_wrap --normal--> cc (with "parallel")
+#
+# The workspace resolves cc with "parallel" (from beta's chain).
+# But when checking alpha, the build dependency phase is skipped (no direct
+# build deps on alpha) and the normal phase doesn't follow BUILD edges,
+# so cc's missing "parallel" feature is never detected.
+
+[workspace]
+name = "build_transitive"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+
+[[crates]]
+name = "lib_sqlite"
+version = "0.1.0"
+build_dependencies = { cc = { version = "0.1.0" } }
+
+[[crates]]
+name = "cmake_wrap"
+version = "0.1.0"
+dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "lib_aws"
+version = "0.1.0"
+build_dependencies = { cmake_wrap = { version = "0.1.0" } }
+
+[[crates]]
+name = "alpha"
+version = "0.1.0"
+workspace_member = true
+dependencies = { lib_sqlite = { version = "0.1.0" } }
+
+[[crates]]
+name = "beta"
+version = "0.1.0"
+workspace_member = true
+dependencies = { lib_aws = { version = "0.1.0" } }

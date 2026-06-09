@@ -1,0 +1,65 @@
+# Workspace: Proc-macro feature mismatch (derive_more-impl pattern)
+#
+# Tests: proc-macro crates (build-time deps) that are transitively reachable
+# through normal dependency chains should be detected when features differ.
+#
+# This mirrors the real-world derive_more-impl case:
+#   daily (member) --normal--> inst --normal--> derive_more [no "is_variant"]
+#   engtool-reconstest-nse (member) --normal--> crossterm
+#     crossterm has: derive-more = ["dep:derive_more"]
+#     crossterm has: [dependencies] derive_more = { optional, features = ["is_variant"] }
+#
+# In this simplified version:
+#   alpha (member) --normal--> lib_a --normal--> derive_more [no "is_variant"]
+#   beta  (member) --normal--> lib_b
+#   beta  has intermediate feature: derive-more = ["dep:derive_more"]
+#   beta  has optional dep on derive_more with features = ["is_variant"]
+#   beta's default feature enables the derive-more intermediate feature
+#
+# derive_more depends on derive_more_impl (proc-macro).
+# derive_more's "is_variant" feature forwards to derive_more_impl/is_variant.
+# The workspace resolves derive_more_impl with "is_variant" (from beta's chain).
+# But alpha's chain only reaches derive_more_impl without "is_variant".
+#
+# The intermediate "derive-more = [dep:derive_more]" feature is critical:
+# without it, the DFS goes directly from beta@derive_more to derive_more@default,
+# skipping the is_variant edge. With it, the DFS must go through
+# beta@derive-more -> beta@derive_more -> derive_more@is_variant.
+
+[workspace]
+name = "derive_more_impl"
+
+[[crates]]
+name = "derive_more_impl"
+version = "0.1.0"
+proc_macro = true
+features = { is_variant = [] }
+
+[[crates]]
+name = "derive_more"
+version = "0.1.0"
+dependencies = { derive_more_impl = { version = "0.1.0" } }
+features = { is_variant = ["derive_more_impl/is_variant"] }
+
+[[crates]]
+name = "lib_a"
+version = "0.1.0"
+dependencies = { derive_more = { version = "0.1.0" } }
+
+[[crates]]
+name = "lib_b"
+version = "0.1.0"
+dependencies = {}
+
+[[crates]]
+name = "beta"
+version = "0.1.0"
+workspace_member = true
+dependencies = { lib_b = { version = "0.1.0" }, derive_more = { version = "0.1.0", optional = true, features = ["is_variant"] } }
+features = { default = ["derive-more"], "derive-more" = ["dep:derive_more"] }
+
+[[crates]]
+name = "alpha"
+version = "0.1.0"
+workspace_member = true
+dependencies = { lib_a = { version = "0.1.0" } }
