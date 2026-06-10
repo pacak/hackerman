@@ -28,7 +28,7 @@ pub fn generate(config: &WorkspaceConfig, output_base: &Path) -> GeneratedWorksp
         .map(|c| format!("\"{}-{}\"", c.name, c.version))
         .collect();
 
-    let ws_toml = if excludes.is_empty() {
+    let mut ws_toml = if excludes.is_empty() {
         format!(
             "[workspace]\nresolver = \"2\"\nmembers = [{}]\n",
             members.join(", ")
@@ -40,6 +40,17 @@ pub fn generate(config: &WorkspaceConfig, output_base: &Path) -> GeneratedWorksp
             excludes.join(", ")
         )
     };
+
+    for (source, deps) in &config.patch {
+        ws_toml.push_str(&format!("[patch.{}]\n", source));
+        for (dep_name, dep_spec) in deps {
+            ws_toml.push_str(&format!(
+                "{} = {}\n",
+                dep_name,
+                generate_patch_dep_line(dep_spec)
+            ));
+        }
+    }
 
     files.push((root.join("Cargo.toml"), ws_toml));
 
@@ -156,16 +167,44 @@ fn generate_crate_toml(config: &CrateConfig) -> String {
 
 fn generate_dep_line(dep_name: &str, spec: &DependencySpec) -> String {
     let config = spec.to_config();
+
+    // If `no_path` is set and there is no path, render the dep as a
+    // bare version spec (e.g. `quadprogpp = "0.1.0"`). This is useful
+    // for testing [patch] redirects and similar.
+    if config.no_path
+        && config.path.is_none()
+        && let Some(version) = &config.version
+    {
+        let mut parts = Vec::new();
+        parts.push(format!("version = \"{}\"", version));
+        if let Some(true) = config.optional {
+            parts.push("optional = true".to_string());
+        }
+        if let Some(false) = config.default_features {
+            parts.push("default-features = false".to_string());
+        }
+        if let Some(ref features) = config.features {
+            let feat_str: Vec<String> = features.iter().map(|f| format!("\"{}\"", f)).collect();
+            parts.push(format!("features = [{}]", feat_str.join(", ")));
+        }
+        if parts.len() == 1 {
+            return format!("{} = \"{}\"\n", dep_name, version);
+        }
+        return format!("{} = {{ {} }}\n", dep_name, parts.join(", "));
+    }
+
     let mut parts = Vec::new();
 
-    // Determine path
-    let path = if let Some(ref p) = config.path {
-        p.clone()
-    } else {
-        let dep_version = config.version.as_deref().unwrap_or("0.1.0");
-        format!("../{}-{}", dep_name, dep_version)
-    };
-    parts.push(format!("path = \"{}\"", path));
+    // Determine path - skip if `no_path` is set (e.g. for [patch] test cases)
+    if !config.no_path {
+        let path = if let Some(ref p) = config.path {
+            p.clone()
+        } else {
+            let dep_version = config.version.as_deref().unwrap_or("0.1.0");
+            format!("../{}-{}", dep_name, dep_version)
+        };
+        parts.push(format!("path = \"{}\"", path));
+    }
 
     if let Some(optional) = config.optional
         && optional
@@ -192,6 +231,22 @@ fn format_deps_list(deps: &[String]) -> String {
         .map(|d| format!("\"{}\"", d))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn generate_patch_dep_line(spec: &crate::config::PatchDepSpec) -> String {
+    match spec {
+        crate::config::PatchDepSpec::Path(p) => format!("{{ path = \"{}\" }}", p),
+        crate::config::PatchDepSpec::Config(c) => {
+            let mut parts = Vec::new();
+            if let Some(ref p) = c.path {
+                parts.push(format!("path = \"{}\"", p));
+            }
+            if let Some(true) = c.optional {
+                parts.push("optional = true".to_string());
+            }
+            format!("{{ {} }}", parts.join(", "))
+        }
+    }
 }
 
 const LIB_RS: &str = "#[cfg(test)] mod tests { #[test] fn it_works() { assert!(true); } }";

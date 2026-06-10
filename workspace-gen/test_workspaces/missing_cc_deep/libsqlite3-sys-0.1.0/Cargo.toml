@@ -1,0 +1,8 @@
+[package]
+name = "libsqlite3-sys"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+cc = { path = "../cc-0.1.0" }
+

@@ -1,0 +1,8 @@
+[package]
+name = "dep_with"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mio = { path = "../mio-0.1.0", features = ["default", "log", "net", "os_ext", "os_poll"] }
+

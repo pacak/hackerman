@@ -1,0 +1,12 @@
+[package]
+name = "cxx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+foldhash = { path = "../foldhash-0.1.0", default-features = false }
+
+[features]
+alloc = []
+default = ["std"]
+std = ["alloc", "foldhash/std"]

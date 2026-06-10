@@ -1,0 +1,47 @@
+# Workspace C: Host vs Target Dependency Isolation
+#
+# Tests: host (build) dependencies are NOT unified with target (normal) dependencies
+#
+# - alpha has normal dep on codec with features ["decode"]
+# - alpha has build-dep on codec with features ["encode"]
+# - beta has normal dep on codec with features ["encode", "optimize"]
+# - beta has build-dep on codec with features ["decode"]
+# - gamma has normal dep on codec and dev-dep on codec with different features
+#
+# Resolution:
+# - Normal codec (target): features ["decode", "encode", "optimize"] unified
+# - Build codec (host): features ["encode", "decode"] unified (separate from normal)
+# - Dev codec (host): features ["test"] (separate from normal)
+#
+# proc-macro deps also run on host and don't unify with target deps
+
+[workspace]
+name = "proc-macro"
+
+[[crates]]
+name = "codec"
+workspace_member = false
+features = { decode = [], encode = [] }
+
+[[crates]]
+name = "alpha"
+workspace_member = true
+dependencies = { macro-helper1 = [] }
+
+[[crates]]
+name = "beta"
+workspace_member = true
+dependencies = { macro-helper2 = [] }
+
+
+[[crates]]
+name = "macro-helper1"
+workspace_member = false
+proc_macro = true
+dependencies = { codec = { features = ["decode"] } }
+
+[[crates]]
+name = "macro-helper2"
+workspace_member = false
+proc_macro = true
+dependencies = { codec = { features = ["encode"] } }

@@ -1,0 +1,8 @@
+[package]
+name = "mid1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aws-lc-sys = { path = "../aws-lc-sys-0.1.0" }
+

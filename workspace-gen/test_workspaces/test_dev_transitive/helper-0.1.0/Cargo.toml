@@ -1,0 +1,8 @@
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cc = { path = "../cc-0.1.0" }
+

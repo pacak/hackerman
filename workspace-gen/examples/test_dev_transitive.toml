@@ -1,0 +1,26 @@
+[workspace]
+name = "test_dev_transitive"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "helper"
+version = "0.1.0"
+workspace_member = false
+dependencies = { cc = { version = "0.1.0" } }
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+build_dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+dev_dependencies = { helper = { version = "0.1.0" } }

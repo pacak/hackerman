@@ -8,6 +8,17 @@ pub struct WorkspaceConfig {
     pub workspace: Workspace,
     #[serde(default)]
     pub crates: Vec<CrateConfig>,
+    /// Patches to apply to the workspace, e.g. `crates-io = { quadprogpp = { path = "..." } }`
+    #[serde(default)]
+    pub patch: BTreeMap<String, BTreeMap<String, PatchDepSpec>>,
+}
+
+/// A single patch entry. Mirrors `DependencySpec` for use under `[[patch]]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum PatchDepSpec {
+    Path(String),
+    Config(DependencyConfig),
 }
 
 impl WorkspaceConfig {
@@ -94,6 +105,7 @@ impl DependencySpec {
                 features: Some(features.clone()),
                 default_features: None,
                 path: None,
+                no_path: false,
             },
         }
     }
@@ -110,7 +122,17 @@ impl<'de> Deserialize<'de> for DependencySpec {
             type Value = DependencySpec;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a map or a sequence")
+                formatter.write_str("a string, a map, or a sequence")
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<DependencySpec, E>
+            where
+                E: de::Error,
+            {
+                Ok(DependencySpec::Config(DependencyConfig {
+                    version: Some(s.to_string()),
+                    ..Default::default()
+                }))
             }
 
             fn visit_seq<A>(self, seq: A) -> Result<DependencySpec, A::Error>
@@ -152,4 +174,9 @@ pub struct DependencyConfig {
     pub features: Option<Vec<String>>,
     pub default_features: Option<bool>,
     pub path: Option<String>,
+    /// When set, the generator will not auto-inject a `path = "..."` for
+    /// this dependency. Useful for testing [patch] redirects and other
+    /// cases where the resolved source must differ from the declared one.
+    #[serde(default)]
+    pub no_path: bool,
 }

@@ -1,0 +1,48 @@
+# Workspace: Missing Feature - Deeper transitive chains
+#
+# Tests: same scenario but with more intermediate crate levels
+
+[workspace]
+name = "missing_cc_deep"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "aws-lc-sys"
+version = "0.1.0"
+workspace_member = false
+build_dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "libsqlite3-sys"
+version = "0.1.0"
+workspace_member = false
+build_dependencies = { cc = { version = "0.1.0" } }
+
+[[crates]]
+name = "mid1"
+version = "0.1.0"
+workspace_member = false
+dependencies = { aws-lc-sys = { version = "0.1.0" } }
+
+[[crates]]
+name = "mid2"
+version = "0.1.0"
+workspace_member = false
+dependencies = { libsqlite3-sys = { version = "0.1.0" } }
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+dependencies = { mid1 = { version = "0.1.0" } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+dependencies = { mid2 = { version = "0.1.0" } }

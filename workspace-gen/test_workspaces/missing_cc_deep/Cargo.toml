@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+members = ["cloud_utils-0.1.0", "market_time-0.1.0"]
+exclude = ["aws-lc-sys-0.1.0", "cc-0.1.0", "libsqlite3-sys-0.1.0", "mid1-0.1.0", "mid2-0.1.0"]

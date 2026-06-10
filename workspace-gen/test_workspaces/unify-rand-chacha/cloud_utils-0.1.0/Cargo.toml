@@ -1,0 +1,8 @@
+[package]
+name = "cloud_utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = { path = "../rand-0.1.0" }
+

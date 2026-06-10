@@ -1,0 +1,12 @@
+[package]
+name = "jsonptr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_json = { path = "../serde_json-0.1.0", optional = true, features = ["alloc"] }
+
+[features]
+default = ["std", "json"]
+json = ["dep:serde_json"]
+std = []

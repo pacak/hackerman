@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+members = ["cloud_utils-0.1.0", "market_time-0.1.0"]
+exclude = ["cc-0.1.0", "helper-0.1.0"]

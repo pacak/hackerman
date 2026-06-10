@@ -1,0 +1,12 @@
+[package]
+name = "beta"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive_more = { path = "../derive_more-0.1.0", optional = true, features = ["is_variant"] }
+lib_b = { path = "../lib_b-0.1.0" }
+
+[features]
+default = ["derive-more"]
+derive-more = ["dep:derive_more"]

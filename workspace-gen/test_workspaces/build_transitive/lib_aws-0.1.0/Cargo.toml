@@ -1,0 +1,8 @@
+[package]
+name = "lib_aws"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+cmake_wrap = { path = "../cmake_wrap-0.1.0" }
+

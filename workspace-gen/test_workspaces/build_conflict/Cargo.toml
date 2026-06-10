@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+members = ["alpha-0.1.0", "beta-0.1.0"]
+exclude = ["codec-0.1.0", "pass1-0.1.0", "pass2-0.1.0"]

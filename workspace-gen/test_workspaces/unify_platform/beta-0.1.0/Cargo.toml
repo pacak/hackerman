@@ -1,0 +1,14 @@
+[package]
+name = "beta"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+widget = { path = "../widget-0.1.0", features = ["base", "extra"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+widget = { path = "../widget-0.1.0", features = ["ios"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+widget = { path = "../widget-0.1.0", features = ["extra"] }
+

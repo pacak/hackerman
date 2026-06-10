@@ -1,0 +1,8 @@
+[package]
+name = "quadprogpp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quadprogpp_sys = { path = "../quadprogpp_sys-0.1.0" }
+

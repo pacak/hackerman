@@ -1,0 +1,8 @@
+[package]
+name = "market_time"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libsqlite3-sys = { path = "../libsqlite3-sys-0.1.0" }
+

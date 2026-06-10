@@ -1,0 +1,8 @@
+[package]
+name = "gamma"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+common = { path = "../common-0.1.0", features = ["c", "d"] }
+

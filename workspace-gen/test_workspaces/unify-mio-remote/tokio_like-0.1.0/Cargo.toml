@@ -1,0 +1,13 @@
+[package]
+name = "tokio_like"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mio = { path = "../mio-0.1.0", optional = true, default-features = false }
+
+[target.'cfg(my_custom_flag)'.dependencies]
+mio = { path = "../mio-0.1.0", optional = true, default-features = false, features = ["os_poll", "os_ext"] }
+
+[features]
+io_uring = ["mio/os_poll", "mio/os_ext"]

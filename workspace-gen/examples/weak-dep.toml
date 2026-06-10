@@ -1,0 +1,73 @@
+# Workspace: Feature unification bug exposed by [patch] redirect
+#
+# Reproduces a case where hackerman fails to detect a unification issue
+# because of how it matches resolved packages with their declared source
+# in the metadata. When a workspace has a [patch] redirect, the dependency
+# entry in the dependent crate still claims the original registry source,
+# but the resolved package has a different source. Hackerman's
+# `source_matches` check is too strict and silently drops the dependency,
+# making the whole transitive path invisible to unification analysis.
+#
+# In the real-world case that motivated this test:
+#   - `models` depends on `quadprogpp` from crates.io
+#   - the workspace has a [patch.crates-io] redirecting `quadprogpp` to
+#     a git checkout that brings in `cxx`
+#   - `cxx` declares `std = ["alloc", "foldhash/std"]`
+#   - `hashbrown` (pulled in by `market_time`) enables `foldhash` as an
+#     optional dependency through `default-hasher`, without ever
+#     activating `foldhash/std`
+#
+# As a result:
+#   - `cargo check -p models` resolves foldhash with the `std` feature
+#   - `cargo check -p market_time` resolves foldhash with no extra
+#     features
+#   - the workspace as a whole unifies foldhash with `std`
+#
+# Hackerman should detect that `market_time` is missing the `std` feature
+# on foldhash, but it does not because the `quadprogpp` dep is dropped
+# during graph construction.
+
+[workspace]
+name = "weak-dep"
+
+[patch.crates-io]
+quadprogpp = { path = "quadprogpp-0.1.0" }
+
+[[crates]]
+name = "foldhash"
+version = "0.1.0"
+features = { std = [] }
+
+[[crates]]
+name = "cxx"
+version = "0.1.0"
+dependencies = { foldhash = { version = "0.1.0", default_features = false } }
+features = { alloc = [], std = ["alloc", "foldhash/std"], default = ["std"] }
+
+[[crates]]
+name = "quadprogpp_sys"
+version = "0.1.0"
+dependencies = { cxx = { version = "0.1.0" } }
+
+[[crates]]
+name = "quadprogpp"
+version = "0.1.0"
+dependencies = { quadprogpp_sys = { version = "0.1.0" } }
+
+[[crates]]
+name = "models"
+version = "0.1.0"
+workspace_member = true
+dependencies = { quadprogpp = { version = "0.1.0", no_path = true } }
+
+[[crates]]
+name = "hashbrown"
+version = "0.1.0"
+dependencies = { foldhash = { version = "0.1.0", optional = true, default_features = false } }
+features = { default-hasher = ["dep:foldhash"], default = ["default-hasher"] }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+dependencies = { hashbrown = { version = "0.1.0" } }

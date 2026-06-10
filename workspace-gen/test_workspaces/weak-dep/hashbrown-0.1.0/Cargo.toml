@@ -1,0 +1,11 @@
+[package]
+name = "hashbrown"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+foldhash = { path = "../foldhash-0.1.0", optional = true, default-features = false }
+
+[features]
+default = ["default-hasher"]
+default-hasher = ["dep:foldhash"]

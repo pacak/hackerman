@@ -1,0 +1,8 @@
+[package]
+name = "daily"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_json = { path = "../serde_json-0.1.0" }
+

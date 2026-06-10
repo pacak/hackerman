@@ -1,0 +1,20 @@
+[workspace]
+name = "test_instance_mismatch"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+build_dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+dependencies = { cc = { version = "0.1.0" } }

@@ -1,0 +1,46 @@
+# Workspace: Missing Feature on External Dependency (realistic scenario)
+#
+# Tests: when two workspace members have normal transitive dependencies on
+# different crates that both have a build dependency on cc, one with the
+# "parallel" feature and one without, the check command should detect
+# the mismatch.
+#
+# Structure:
+#   cloud_utils (member) --normal--> aws-lc-sys --build--> cc (with "parallel")
+#   market_time (member) --normal--> libsqlite3-sys --build--> cc (no "parallel")
+#
+# This mirrors the actual bug report where check fails to detect the missing
+# parallel feature on cc for market_time.
+
+[workspace]
+name = "missing_cc_real"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "aws-lc-sys"
+version = "0.1.0"
+workspace_member = false
+build_dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "libsqlite3-sys"
+version = "0.1.0"
+workspace_member = false
+build_dependencies = { cc = { version = "0.1.0" } }
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+dependencies = { aws-lc-sys = { version = "0.1.0" } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+dependencies = { libsqlite3-sys = { version = "0.1.0" } }

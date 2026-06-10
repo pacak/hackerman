@@ -1,0 +1,49 @@
+# Workspace: Missing Feature on External Dependency (build deps)
+#
+# Tests: when two workspace members depend on the same external crate
+# through build dependency chains, one with a feature and one without,
+# the check command should detect the mismatch.
+#
+# Structure:
+#   cloud_utils (member) --BUILD--> cmake_wrap --normal--> cc (with "parallel")
+#   market_time (member) --BUILD--> build_helper --normal--> cc (no "parallel")
+#
+# The workspace resolves cc with "parallel" (from cloud_utils's chain).
+# market_time should be flagged as missing the "parallel" feature on cc.
+#
+# Both members reach cc as Host instance through build dep chains,
+# so the fix (Collect::NoDev for workspace collection) ensures
+# cc_host with parallel is in the workspace feature set.
+
+[workspace]
+name = "missing_cc"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "build_helper"
+version = "0.1.0"
+workspace_member = false
+dependencies = { cc = { version = "0.1.0" } }
+
+[[crates]]
+name = "cmake_wrap"
+version = "0.1.0"
+workspace_member = false
+dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+build_dependencies = { cmake_wrap = { version = "0.1.0" } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true
+build_dependencies = { build_helper = { version = "0.1.0" } }
