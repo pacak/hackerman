@@ -11,27 +11,28 @@ use semver::Version;
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
+/// Find all the packages that can be a starting point for a query to display (display purposes)
+///
+/// Match all crates by name, with refining by a feature name and/or version number
 fn collect_packages(
     fg: &mut FeatGraph,
-
     krate: &str,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
 ) -> Vec<NodeIndex> {
     fg.features
         .node_indices()
         .filter(|&ix| {
-            if let Some(fid) = fg.features[ix].fid() {
-                let package = fid.pid.package();
-                // name must match.
-                // feature must match if given, otherwise look for base
-                // version must match if given
-                package.name == krate
-                    && feature.map_or(fid.pid.base() == fid, |f| fid.pid.named(f) == fid)
-                    && version.is_none_or(|v| package.version == *v)
-            } else {
-                false
-            }
+            let Some(fid) = fg.features[ix].fid() else {
+                return false;
+            };
+            let package = fid.pid.package();
+            // name must match.
+            // feature must match if given, otherwise look for base
+            // version must match if given
+            package.name == krate
+                && version.is_none_or(|v| package.version == *v)
+                && (feature.is_none() || feature == fid.name())
         })
         .collect::<Vec<_>>()
 }
@@ -39,7 +40,7 @@ fn collect_packages(
 pub fn tree<'a>(
     fg: &'a mut FeatGraph<'a>,
     krate: Option<&String>,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
     package_nodes: bool,
     workspace: bool,
@@ -119,7 +120,7 @@ pub fn tree<'a>(
 pub fn explain<'a>(
     fg: &'a mut FeatGraph<'a>,
     krate: &str,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
     package_nodes: bool,
     stdout: bool,

@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
             tree(
                 &mut fg,
                 krate.as_ref(),
-                feature.as_ref(),
+                feature.as_deref(),
                 version.as_ref(),
                 package_nodes,
                 workspace,
@@ -157,7 +157,7 @@ fn main() -> anyhow::Result<()> {
             explain(
                 &mut fg,
                 &krate,
-                feature.as_ref(),
+                feature.as_deref(),
                 version.as_ref(),
                 package_nodes,
                 stdout,

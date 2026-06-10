@@ -546,6 +546,15 @@ pub struct Fid<'a> {
     pub dep: Feat<'a>,
 }
 
+impl<'a> Fid<'a> {
+    pub(crate) fn name(self) -> Option<&'a str> {
+        match self.dep {
+            Feat::Named(n) => Some(n),
+            Feat::Base => None,
+        }
+    }
+}
+
 impl std::fmt::Display for Fid<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let id = &self.pid.package().id;
