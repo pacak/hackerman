@@ -1,5 +1,5 @@
 use cargo_metadata::Dependency;
-use cargo_platform::Cfg;
+use cargo_metadata::cargo_platform::{Cfg, Platform};
 
 use crate::{feat_graph::Feature, hack::Collect};
 
@@ -29,7 +29,7 @@ impl From<cargo_metadata::DependencyKind> for DependencyKind {
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct DepKindInfo {
     pub kind: DependencyKind,
-    pub target: Option<cargo_platform::Platform>,
+    pub target: Option<Platform>,
 }
 
 impl DepKindInfo {

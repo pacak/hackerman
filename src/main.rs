@@ -8,7 +8,7 @@ use cargo_hackerman::{
     toml,
 };
 use cargo_metadata::camino::Utf8PathBuf;
-use cargo_platform::Cfg;
+use cargo_metadata::cargo_platform::Cfg;
 use std::{
     collections::{BTreeMap, BTreeSet},
     process::Command,

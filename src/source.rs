@@ -124,7 +124,7 @@ impl<'a> ChangePackage<'a> {
         if let Some(src) = &package.source {
             let source = PackageSource::try_from(src.repr.as_str())?;
             Ok(ChangePackage {
-                name: package.name.clone(),
+                name: package.name.as_ref().to_string(),
                 ty,
                 version: package.version.clone(),
                 source,
@@ -150,7 +150,7 @@ impl<'a> ChangePackage<'a> {
                 }
             };
             Ok(ChangePackage {
-                name: package.name.clone(),
+                name: package.name.as_ref().to_string(),
                 ty,
                 version: package.version.clone(),
                 source,

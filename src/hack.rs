@@ -6,8 +6,7 @@ use crate::{
     source::ChangePackage,
     toml::set_dependencies,
 };
-use cargo_metadata::Metadata;
-use cargo_platform::Cfg;
+use cargo_metadata::{Metadata, cargo_platform::Cfg};
 use petgraph::{
     graph::NodeIndex,
     visit::{Dfs, DfsPostOrder, EdgeFiltered, EdgeRef, NodeFiltered, VisitMap, Walker},

@@ -1,7 +1,6 @@
 use crate::hack::Collect;
 use crate::metadata::{DepKindInfo, Link};
-use cargo_metadata::{Metadata, Package, PackageId, Source};
-use cargo_platform::Cfg;
+use cargo_metadata::{Metadata, Package, PackageId, Source, cargo_platform::Cfg};
 use dot::{GraphWalk, Labeller};
 use petgraph::Graph;
 use petgraph::graph::{EdgeIndex, NodeIndex};
@@ -320,10 +319,10 @@ impl<'a> FeatGraph<'a> {
                 continue;
             }
 
-            let source_matches = |a: Option<&Source>, b: Option<&String>| match (a, b) {
+            let source_matches = |a: Option<&Source>, b: Option<&Source>| match (a, b) {
                 (None, None) => true,
                 (Some(a), Some(b)) => {
-                    if &a.repr == b || (a.repr.starts_with("git") && a.repr.starts_with(b)) {
+                    if a == b || (a.repr.starts_with("git") && a.repr.starts_with(&b.repr)) {
                         true
                     } else {
                         trace!(
@@ -381,7 +380,11 @@ impl<'a> FeatGraph<'a> {
 
             // for remote dependencies we store the resolved ifo in order to deal with renames
             if let Some(remote) = remote {
-                let name = dep.rename.clone().unwrap_or_else(|| resolved.name.clone());
+                let name = dep
+                    .rename
+                    .as_ref()
+                    .map_or(resolved.name.as_str().to_string(), |n| n.clone());
+
                 deps.insert(name, (resolved, dep, remote));
             }
         }
