@@ -1,7 +1,7 @@
 #![allow(clippy::similar_names)]
 
 use crate::{
-    feat_graph::{Feat, FeatGraph, Pid},
+    feat_graph::{CrateInstance, Feat, FeatGraph, Pid},
     metadata::DepKindInfo,
     source::ChangePackage,
     toml::set_dependencies,
@@ -161,8 +161,8 @@ fn collect_features_from<M>(
             }
         }
         for t in fg.triggers.iter() {
-            let package = fg.fid_cache[&t.package.base().get_base()];
-            let feature = fg.fid_cache[&t.feature]; // .unwrap();
+            let package = fg.fid_cache[&t.package.base(t.feature.instance).get_base()];
+            let feature = fg.fid_cache[&t.feature];
             let weak_dep = fg.fid_cache[&t.weak_dep];
             let weak_feat = fg.fid_cache[&t.weak_feat];
 
@@ -276,9 +276,9 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
 
                 let package = pid.package();
                 let fid = if package.features.contains_key("default") {
-                    pid.named("default")
+                    pid.named("default", CrateInstance::Target)
                 } else {
-                    pid.base()
+                    pid.base(CrateInstance::Target)
                 };
                 if let Some(&ix) = fg.fid_cache.get(&fid) {
                     res.push((pid, ix));
@@ -319,8 +319,13 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                         .or_insert_with(BTreeMap::default)
                         .insert((Ty::Norm, dep), ws_feats.clone());
 
-                    let new_dep =
-                        fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
+                    let new_dep = fg.add_edge(
+                        member_ix,
+                        missing_feat,
+                        false,
+                        DepKindInfo::NORMAL,
+                        CrateInstance::Target,
+                    )?;
                     dfs.move_to(new_dep);
 
                     trace!("Performing one more iteration on {member:?}");
@@ -369,7 +374,13 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                         .or_insert_with(BTreeMap::default)
                         .insert((Ty::Build, dep), ws_feats.clone());
 
-                    let new_dep = fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
+                    let new_dep = fg.add_edge(
+                        member_ix,
+                        missing_feat,
+                        false,
+                        DepKindInfo::DEV,
+                        CrateInstance::Target,
+                    )?;
                     dfs.move_to(new_dep);
 
                     trace!("Performing one more dev iteration on {member:?}");
@@ -388,7 +399,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         use std::cell::RefCell;
         let mut deps = BTreeMap::new();
         let cell = RefCell::new(&mut deps);
-        let package_index = match fg.fid_cache.get(&package.root()) {
+        let package_index = match fg.fid_cache.get(&package.root(CrateInstance::Target)) {
             Some(ix) => ix,
             None => continue,
         };

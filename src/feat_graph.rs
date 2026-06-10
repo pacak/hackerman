@@ -10,6 +10,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Index;
 use tracing::{debug, error, info, trace};
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CrateInstance {
+    /// Crate is compiled for the host (build scripts, proc macros)
+    Host,
+    /// Crate is compiled for the target
+    Target,
+}
+
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
 /// An node for feature graph
 pub enum Feature<'a> {
@@ -90,7 +98,7 @@ impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
     type Output = NodeIndex;
 
     fn index(&self, index: Pid<'a>) -> &Self::Output {
-        &self.fid_cache[&index.root()]
+        &self.fid_cache[&index.root(CrateInstance::Target)]
     }
 }
 
@@ -206,7 +214,7 @@ impl<'a> FeatGraph<'a> {
         };
 
         for (ix, package) in metadata.packages.iter().enumerate() {
-            graph.add_package(ix, package, &metadata.packages)?;
+            graph.add_package(ix, package, &metadata.packages, CrateInstance::Target)?;
         }
 
         graph.rebuild_cache()?;
@@ -296,19 +304,37 @@ impl<'a> FeatGraph<'a> {
         key: usize,
         package: &'a Package,
         packages: &'a [Package],
+        instance: CrateInstance,
     ) -> anyhow::Result<()> {
-        debug!("== adding package {}", package.id);
+        // Proc macro crates are always compiled for the host, regardless of how they're reached
+        let instance = if package.targets.iter().any(|t| {
+            t.kind
+                .iter()
+                .any(|k| *k == cargo_metadata::TargetKind::ProcMacro)
+        }) {
+            CrateInstance::Host
+        } else {
+            instance
+        };
+
+        debug!("== adding package {} ({:?})", package.id, instance);
         let this = Pid {
             key,
             metadata: self.metadata,
         };
-        let base_ix = self.fid_index(this.base());
+        let base_ix = self.fid_index(this.base(instance));
 
         let workspace_member = self.workspace_members.contains(&this);
 
         // root contains links to all the workspace members
         if workspace_member {
-            self.add_edge(self.root, this, false, DepKindInfo::NORMAL)?;
+            self.add_edge(
+                self.root,
+                this,
+                false,
+                DepKindInfo::NORMAL,
+                CrateInstance::Target,
+            )?;
         }
 
         // resolve and cache crate dependencies and create a cache mapping name to dep
@@ -350,14 +376,33 @@ impl<'a> FeatGraph<'a> {
                 }
             };
 
+            // Determine the instance of the dependency:
+            // - Host instance always produces Host dependencies
+            // - Target + build link -> Host
+            // - Target + normal link -> Target
+            let dep_instance = match instance {
+                CrateInstance::Host => CrateInstance::Host,
+                CrateInstance::Target => {
+                    if dep.kind == cargo_metadata::DependencyKind::Build {
+                        CrateInstance::Host
+                    } else {
+                        CrateInstance::Target
+                    }
+                }
+            };
+
             // feature dependencies:
             //
             // - optional dependencies are linked from named feature
             // - requred dependenceis are linked fromb base
             let this = if dep.optional {
                 match dep.rename.as_ref() {
-                    Some(name) => this.named(name).get_index(self)?,
-                    None => this.named(&dep.name).get_index(self)?,
+                    Some(name) => this
+                        .named(name, dep_instance)
+                        .get_index(self, dep_instance)?,
+                    None => this
+                        .named(&dep.name, dep_instance)
+                        .get_index(self, dep_instance)?,
                 }
             } else {
                 base_ix
@@ -366,16 +411,22 @@ impl<'a> FeatGraph<'a> {
             //  dependencies that have default target are linked to that target
             //  otherwise dependencies are linked to
             let remote = if dep.uses_default_features {
-                Some(self.add_edge(this, resolved, false, dep.into())?)
+                Some(self.add_edge(this, resolved, false, dep.into(), dep_instance)?)
             } else if let Some(pid) = self.cache.get(&resolved.id) {
-                let fid = pid.base();
-                Some(self.add_edge(this, fid, false, dep.into())?)
+                let fid = pid.base(dep_instance);
+                Some(self.add_edge(this, fid, false, dep.into(), dep_instance)?)
             } else {
                 None
             };
             // if additional features on dependency are required - we add them all
             for feat in &dep.features {
-                self.add_edge(this, (resolved, feat.as_str()), false, dep.into())?;
+                self.add_edge(
+                    this,
+                    (resolved, feat.as_str()),
+                    false,
+                    dep.into(),
+                    dep_instance,
+                )?;
             }
 
             // for remote dependencies we store the resolved ifo in order to deal with renames
@@ -390,24 +441,30 @@ impl<'a> FeatGraph<'a> {
         }
 
         for (this_feat, feat_deps) in &package.features {
-            let feat_ix = self.fid_index(this.named(this_feat));
-            self.add_edge(feat_ix, base_ix, false, DepKindInfo::NORMAL)?;
+            let feat_ix = self.fid_index(this.named(this_feat, instance));
+            self.add_edge(feat_ix, base_ix, false, DepKindInfo::NORMAL, instance)?;
 
             for feat_dep in feat_deps.iter() {
                 match FeatTarget::from(feat_dep.as_str()) {
                     FeatTarget::Named { name } => {
-                        self.add_edge(feat_ix, this.named(name), false, DepKindInfo::NORMAL)?;
+                        self.add_edge(
+                            feat_ix,
+                            this.named(name, instance),
+                            false,
+                            DepKindInfo::NORMAL,
+                            instance,
+                        )?;
                     }
                     FeatTarget::Dependency { krate } => {
                         if let Some(&(_dep, link, remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, remote, true, link.into())?;
+                            self.add_edge(feat_ix, remote, true, link.into(), instance)?;
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
                     }
                     FeatTarget::Remote { krate, feat } => {
                         if let Some(&(dep, link, _remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, (dep, feat), true, link.into())?;
+                            self.add_edge(feat_ix, (dep, feat), true, link.into(), instance)?;
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
@@ -419,9 +476,9 @@ impl<'a> FeatGraph<'a> {
                         {
                             let trigger = Trigger {
                                 package: this,
-                                feature: this.named(this_feat),
-                                weak_dep: this.named(krate),
-                                weak_feat: dep.named(feat),
+                                feature: this.named(this_feat, instance),
+                                weak_dep: this.named(krate, instance),
+                                weak_feat: dep.named(feat, instance),
                             };
                             self.triggers.push(trigger);
                         } else {
@@ -441,13 +498,14 @@ impl<'a> FeatGraph<'a> {
         b: B,
         optional: bool,
         kind: DepKindInfo,
+        _source_instance: CrateInstance,
     ) -> anyhow::Result<NodeIndex>
     where
         A: HasIndex<'a>,
         B: HasIndex<'a>,
     {
-        let a = a.get_index(self)?;
-        let b = b.get_index(self)?;
+        let a = a.get_index(self, _source_instance)?;
+        let b = b.get_index(self, _source_instance)?;
         trace!(
             "adding {}edge {a:?} -> {b:?}: {kind:?}\n\t{:?}\n\t{:?}",
             if optional { "optional " } else { "" },
@@ -488,26 +546,28 @@ impl<'a> Pid<'a> {
 
 impl<'a> Pid<'a> {
     #[must_use]
-    pub fn root(self) -> Fid<'a> {
+    pub fn root(self, instance: CrateInstance) -> Fid<'a> {
         if self.package().features.contains_key("default") {
-            self.named("default")
+            self.named("default", instance)
         } else {
-            self.base()
+            self.base(instance)
         }
     }
 
     #[must_use]
-    pub const fn base(self) -> Fid<'a> {
+    pub const fn base(self, instance: CrateInstance) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Base,
+            instance,
         }
     }
     #[must_use]
-    pub const fn named(self, name: &'a str) -> Fid<'a> {
+    pub const fn named(self, name: &'a str, instance: CrateInstance) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Named(name),
+            instance,
         }
     }
 }
@@ -544,6 +604,8 @@ pub struct Fid<'a> {
     /// this feature originates from
     pub pid: Pid<'a>,
     pub dep: Feat<'a>,
+    /// whether this crate instance is compiled for host or target
+    pub instance: CrateInstance,
 }
 
 impl<'a> Fid<'a> {
@@ -561,6 +623,10 @@ impl std::fmt::Display for Fid<'_> {
         match self.dep {
             Feat::Base => write!(f, "{id}"),
             Feat::Named(name) => write!(f, "{id}:{name}"),
+        }?;
+        match self.instance {
+            CrateInstance::Host => write!(f, " (host)"),
+            CrateInstance::Target => Ok(()),
         }
     }
 }
@@ -705,50 +771,74 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
 }
 
 pub trait HasIndex<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex>;
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex>;
 }
 
 impl HasIndex<'_> for NodeIndex {
-    fn get_index(self, _graph: &mut FeatGraph) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        _graph: &mut FeatGraph,
+        _instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         Ok(self)
     }
 }
 
 impl<'a> HasIndex<'a> for Fid<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        _instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         Ok(graph.fid_index(self))
     }
 }
 
 impl<'a> HasIndex<'a> for Pid<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         if self.package().features.contains_key("default") {
-            Ok(graph.fid_index(self.named("default")))
+            Ok(graph.fid_index(self.named("default", instance)))
         } else {
-            Ok(graph.fid_index(self.base()))
+            Ok(graph.fid_index(self.base(instance)))
         }
     }
 }
 
 impl<'a> HasIndex<'a> for &'a Package {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         (*graph
             .cache
             .get(&self.id)
             .ok_or_else(|| anyhow::anyhow!("No cached value for {:?}", self.id))?)
-        .get_index(graph)
+        .get_index(graph, instance)
     }
 }
 
 impl<'a> HasIndex<'a> for (&'a Package, &'a str) {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         let package_id = &self.0.id;
         let feat = self.1;
         let pid = *graph
             .cache
             .get(package_id)
             .ok_or_else(|| anyhow::anyhow!("No cached value for {package_id:?}"))?;
-        pid.named(feat).get_index(graph)
+        pid.named(feat, instance).get_index(graph, instance)
     }
 }
 
@@ -776,7 +866,7 @@ impl<'a> From<&'a str> for FeatTarget<'a> {
 
 impl Fid<'_> {
     #[must_use]
-    /// Create a base feature from possibly named one
+    /// Create a base feature from possibly named one, preserving instance
     pub const fn get_base(&self) -> Self {
         Self {
             dep: Feat::Base,

@@ -1,5 +1,5 @@
 use crate::{
-    feat_graph::{FeatGraph, HasIndex},
+    feat_graph::{CrateInstance, FeatGraph, HasIndex},
     metadata::{DepKindInfo, Link},
 };
 
@@ -55,7 +55,7 @@ pub fn tree<'a>(
             let members = fg.workspace_members.clone();
             members
                 .iter()
-                .map(|f| fg.fid_index(f.base()))
+                .map(|f| fg.fid_index(f.base(CrateInstance::Target)))
                 .collect::<Vec<_>>()
         }
     };
@@ -83,6 +83,7 @@ pub fn tree<'a>(
                 node
             };
             nodes.insert(this_node);
+
             for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
                 if package_nodes {
                     new_edges.insert((
@@ -98,7 +99,7 @@ pub fn tree<'a>(
 
     if package_nodes {
         for (a, b) in new_edges {
-            let a = a.get_index(fg)?;
+            let a = a.get_index(fg, CrateInstance::Target)?;
             if a != b {
                 let link = Link {
                     optional: false,
@@ -179,7 +180,7 @@ pub fn explain<'a>(
 
     if package_nodes {
         for (a, b) in new_edges {
-            let a = a.get_index(fg)?;
+            let a = a.get_index(fg, CrateInstance::Target)?;
             if a != b {
                 let link = Link {
                     optional: false,
