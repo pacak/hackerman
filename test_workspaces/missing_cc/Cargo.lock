@@ -3,35 +3,33 @@
 version = 4
 
 [[package]]
-name = "alpha"
+name = "build_helper"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass1",
+ "cc",
 ]
 
 [[package]]
-name = "beta"
+name = "cc"
+version = "0.1.0"
+
+[[package]]
+name = "cloud_utils"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass2",
+ "cmake_wrap",
 ]
 
 [[package]]
-name = "codec"
-version = "0.1.0"
-
-[[package]]
-name = "pass1"
+name = "cmake_wrap"
 version = "0.1.0"
 dependencies = [
- "codec",
+ "cc",
 ]
 
 [[package]]
-name = "pass2"
+name = "market_time"
 version = "0.1.0"
 dependencies = [
- "codec",
+ "build_helper",
 ]

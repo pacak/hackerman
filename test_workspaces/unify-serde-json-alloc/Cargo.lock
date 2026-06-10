@@ -3,35 +3,26 @@
 version = 4
 
 [[package]]
-name = "alpha"
+name = "daily"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass1",
+ "serde_json",
 ]
 
 [[package]]
-name = "beta"
+name = "jsonptr"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass2",
+ "serde_json",
 ]
 
 [[package]]
-name = "codec"
-version = "0.1.0"
-
-[[package]]
-name = "pass1"
+name = "livetrader"
 version = "0.1.0"
 dependencies = [
- "codec",
+ "jsonptr",
 ]
 
 [[package]]
-name = "pass2"
+name = "serde_json"
 version = "0.1.0"
-dependencies = [
- "codec",
-]

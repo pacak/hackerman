@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [build-dependencies]
+codec = { path = "../codec-0.1.0", features = ["decode", "encode"] }
 pass2 = { path = "../pass2-0.1.0" }
 

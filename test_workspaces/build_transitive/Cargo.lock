@@ -6,32 +6,37 @@ version = 4
 name = "alpha"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass1",
+ "lib_sqlite",
 ]
 
 [[package]]
 name = "beta"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass2",
+ "lib_aws",
 ]
 
 [[package]]
-name = "codec"
+name = "cc"
 version = "0.1.0"
 
 [[package]]
-name = "pass1"
+name = "cmake_wrap"
 version = "0.1.0"
 dependencies = [
- "codec",
+ "cc",
 ]
 
 [[package]]
-name = "pass2"
+name = "lib_aws"
 version = "0.1.0"
 dependencies = [
- "codec",
+ "cmake_wrap",
+]
+
+[[package]]
+name = "lib_sqlite"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]

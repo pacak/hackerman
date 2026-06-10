@@ -6,16 +6,14 @@ version = 4
 name = "alpha"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass1",
+ "macro-helper1",
 ]
 
 [[package]]
 name = "beta"
 version = "0.1.0"
 dependencies = [
- "codec",
- "pass2",
+ "macro-helper2",
 ]
 
 [[package]]
@@ -23,14 +21,14 @@ name = "codec"
 version = "0.1.0"
 
 [[package]]
-name = "pass1"
+name = "macro-helper1"
 version = "0.1.0"
 dependencies = [
  "codec",
 ]
 
 [[package]]
-name = "pass2"
+name = "macro-helper2"
 version = "0.1.0"
 dependencies = [
  "codec",

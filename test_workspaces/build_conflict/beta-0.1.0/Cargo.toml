@@ -7,5 +7,6 @@ edition = "2024"
 codec = { path = "../codec-0.1.0", features = ["optimize"] }
 
 [build-dependencies]
+codec = { path = "../codec-0.1.0", features = ["decode", "encode"] }
 pass2 = { path = "../pass2-0.1.0" }
 

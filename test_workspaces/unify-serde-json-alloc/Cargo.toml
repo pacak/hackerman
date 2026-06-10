@@ -1,0 +1,4 @@
+[workspace]
+resolver = "2"
+members = ["daily-0.1.0", "livetrader-0.1.0"]
+exclude = ["jsonptr-0.1.0", "serde_json-0.1.0"]

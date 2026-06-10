@@ -1,0 +1,11 @@
+[package]
+name = "macro-helper1"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+codec = { path = "../codec-0.1.0", features = ["decode"] }
+
