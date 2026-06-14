@@ -365,11 +365,22 @@ impl<'a> FeatGraph<'a> {
                 _ => false,
             };
             // get resolved package - should be there in at most one matching copy...
-            let resolved = match packages.iter().find(|p| {
-                p.name == dep.name
-                    && dep.req.matches(&p.version)
-                    && source_matches(p.source.as_ref(), dep.source.as_ref())
-            }) {
+            // Prefer a candidate whose source matches the dep's declared source;
+            // fall back to any candidate matching by name+version so that
+            // `[patch]` redirects are still handled.
+            let resolved = packages
+                .iter()
+                .find(|p| {
+                    p.name == dep.name
+                        && dep.req.matches(&p.version)
+                        && source_matches(p.source.as_ref(), dep.source.as_ref())
+                })
+                .or_else(|| {
+                    packages
+                        .iter()
+                        .find(|p| p.name == dep.name && dep.req.matches(&p.version))
+                });
+            let resolved = match resolved {
                 Some(res) => res,
                 None => {
                     debug!(
