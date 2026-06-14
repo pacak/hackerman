@@ -405,14 +405,9 @@ impl<'a> FeatGraph<'a> {
             //   real named features of the parent crate
             // - required dependencies are linked from base
             let this = if dep.optional {
-                match dep.rename.as_ref() {
-                    Some(name) => this
-                        .named(name, dep_instance)
-                        .get_index(self, dep_instance)?,
-                    None => this
-                        .named(&dep.name, dep_instance)
-                        .get_index(self, dep_instance)?,
-                }
+                let name = dep.rename.as_deref().unwrap_or(dep.name.as_ref());
+                this.dep_node(name, dep_instance)
+                    .get_index(self, dep_instance)?
             } else {
                 base_ix
             };
