@@ -332,7 +332,7 @@ impl<'a> FeatGraph<'a> {
         let workspace_member = self.workspace_members.contains(&this);
 
         // root contains links to all the workspace members
-        if workspace_member {
+        if workspace_member && instance == CrateInstance::Target {
             self.add_edge(
                 self.root,
                 this,
@@ -440,7 +440,13 @@ impl<'a> FeatGraph<'a> {
                     .as_ref()
                     .map_or(resolved.name.as_str().to_string(), |n| n.clone());
 
-                deps.insert(name, (resolved, dep, remote));
+                // For optional dependencies, `this` is the named feature
+                // representing the dep (e.g. `crate/<dep_name>`). It is the
+                // node that `dep:<dep_name>` syntax in features should
+                // enable, so we remember it for later use in the feature
+                // loop.
+                let named = if dep.optional { Some(this) } else { None };
+                deps.insert(name, (resolved, dep, remote, dep_instance, named));
             }
         }
 
@@ -460,31 +466,81 @@ impl<'a> FeatGraph<'a> {
                         )?;
                     }
                     FeatTarget::Dependency { krate } => {
-                        if let Some(&(_dep, link, remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, remote, true, link.into(), instance)?;
+                        if let Some(&(_pkg, _link, _remote, _dep_instance, named)) = deps.get(krate)
+                        {
+                            // `dep:<krate>` enables the optional dep. The
+                            // activation has to go through the named
+                            // feature (e.g. `crate/<dep_name>`) so that
+                            // the explicit features the dep was declared
+                            // with (`dep.features`) are also picked up
+                            // when the resulting graph is walked.
+                            let Some(named) = named else {
+                                debug!("dep:<{krate}> only applies to optional dependencies");
+                                continue;
+                            };
+                            self.add_edge(feat_ix, named, true, DepKindInfo::NORMAL, instance)?;
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
                     }
                     FeatTarget::Remote { krate, feat } => {
-                        if let Some(&(dep, link, _remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, (dep, feat), true, link.into(), instance)?;
+                        if let Some(&(pkg, link, _remote, dep_instance, _named)) = deps.get(krate) {
+                            if link.optional {
+                                let weak_dep = this.dep_node(krate, dep_instance);
+                                self.add_edge(
+                                    feat_ix,
+                                    weak_dep,
+                                    true,
+                                    DepKindInfo::NORMAL,
+                                    instance,
+                                )?;
+                                if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                    let weak_feat = pid.named(feat, dep_instance);
+                                    self.fid_index(weak_feat);
+                                    let trigger = Trigger {
+                                        package: this,
+                                        feature: this.named(this_feat, instance),
+                                        weak_dep,
+                                        weak_feat,
+                                    };
+                                    self.triggers.push(trigger);
+                                }
+                            } else if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                self.add_edge(
+                                    feat_ix,
+                                    pid.named(feat, dep_instance),
+                                    true,
+                                    link.into(),
+                                    dep_instance,
+                                )?;
+                            }
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
                     }
                     FeatTarget::Cond { krate, feat } => {
-                        if let Some(dep) = deps
-                            .get(krate)
-                            .and_then(|&(dep, _link, _remote)| self.cache.get(&dep.id).copied())
-                        {
-                            let trigger = Trigger {
-                                package: this,
-                                feature: this.named(this_feat, instance),
-                                weak_dep: this.named(krate, instance),
-                                weak_feat: dep.named(feat, instance),
-                            };
-                            self.triggers.push(trigger);
+                        if let Some(&(pkg, link, _remote, dep_instance, _named)) = deps.get(krate) {
+                            if link.optional {
+                                if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                    let weak_feat = pid.named(feat, dep_instance);
+                                    self.fid_index(weak_feat);
+                                    let trigger = Trigger {
+                                        package: this,
+                                        feature: this.named(this_feat, instance),
+                                        weak_dep: this.dep_node(krate, dep_instance),
+                                        weak_feat,
+                                    };
+                                    self.triggers.push(trigger);
+                                }
+                            } else if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                self.add_edge(
+                                    feat_ix,
+                                    pid.named(feat, dep_instance),
+                                    true,
+                                    link.into(),
+                                    dep_instance,
+                                )?;
+                            }
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }

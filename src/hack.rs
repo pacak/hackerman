@@ -52,7 +52,7 @@ pub fn hack(
             println!("{path}");
             for change in changeset {
                 let t = match change.ty {
-                    Ty::Build => "dev ",
+                    Ty::Build => "build ",
                     Ty::Norm => "",
                 };
                 println!(
@@ -235,7 +235,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         &mut Dfs::new(&fg.features, fg.root),
         fg,
         &mut raw_workspace_feats,
-        Collect::NormalOnly,
+        Collect::NoDev,
     );
 
     // For reasons unknown cargo resolves dependencies for all the targets including those
@@ -250,6 +250,16 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
         Collect::Target,
     );
     raw_workspace_feats.retain(|k, _| filtered_workspace_feats.contains_key(k));
+
+    let filtered_workspace_host_feats: DetachedDepTree = filtered_workspace_feats
+        .iter()
+        .filter(|(key, _)| {
+            fg.features[**key]
+                .fid()
+                .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        })
+        .map(|(&k, v)| (k, v.clone()))
+        .collect();
 
     info!(
         "Accumulated workspace dependencies{}",
@@ -275,10 +285,15 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                 seen.insert(pid);
 
                 let package = pid.package();
-                let fid = if package.features.contains_key("default") {
-                    pid.named("default", CrateInstance::Target)
+                let instance = if pid.is_proc_macro() {
+                    CrateInstance::Host
                 } else {
-                    pid.base(CrateInstance::Target)
+                    CrateInstance::Target
+                };
+                let fid = if package.features.contains_key("default") {
+                    pid.named("default", instance)
+                } else {
+                    pid.base(instance)
                 };
                 if let Some(&ix) = fg.fid_cache.get(&fid) {
                     res.push((pid, ix));
@@ -308,16 +323,27 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             );
 
             for (&dep, feats) in &deps_feats {
+                if let Some(fid) = fg.features[dep].fid() {
+                    let dep_name = fid.pid.package().name.clone();
+                }
                 if let Some(ws_feats) = raw_workspace_feats.get(&dep)
                     && ws_feats != feats
                     && let Some(&missing_feat) = ws_feats.difference(feats).next()
                 {
                     info!("\t{member:?} lacks {}", fg.features[missing_feat]);
 
+                    let ty = if let Some(fid) = fg.features[missing_feat].fid()
+                        && (fid.instance == CrateInstance::Host || fid.pid.is_proc_macro())
+                    {
+                        Ty::Build
+                    } else {
+                        Ty::Norm
+                    };
+
                     changed
                         .entry(member)
                         .or_insert_with(BTreeMap::default)
-                        .insert((Ty::Norm, dep), ws_feats.clone());
+                        .insert((ty, dep), ws_feats.clone());
 
                     let new_dep = fg.add_edge(
                         member_ix,
@@ -354,7 +380,12 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             // DFS traverse of the current member and everything below it
             collect_features_from(&mut dfs, fg, &mut build_feats, Collect::MemberBuild(member));
 
-            build_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
+            build_feats.retain(|key, _| {
+                fg.features[*key]
+                    .fid()
+                    .is_some_and(|fid| fid.instance == CrateInstance::Host)
+                    && filtered_workspace_host_feats.contains_key(key)
+            });
 
             debug!(
                 "Accumulated build deps for {:?} are as following:{}",
@@ -363,7 +394,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             );
 
             for (&dep, feats) in &build_feats {
-                if let Some(ws_feats) = raw_workspace_feats.get(&dep)
+                if let Some(ws_feats) = filtered_workspace_host_feats.get(&dep)
                     && ws_feats != feats
                     && let Some(&missing_feat) = ws_feats.difference(feats).next()
                 {
