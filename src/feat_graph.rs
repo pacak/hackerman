@@ -214,7 +214,12 @@ impl<'a> FeatGraph<'a> {
         };
 
         for (ix, package) in metadata.packages.iter().enumerate() {
-            graph.add_package(ix, package, &metadata.packages, CrateInstance::Target)?;
+            let instance = if is_proc_macro(package) {
+                CrateInstance::Host
+            } else {
+                CrateInstance::Target
+            };
+            graph.add_package(ix, package, &metadata.packages, instance)?;
         }
 
         graph.rebuild_cache()?;
@@ -380,10 +385,12 @@ impl<'a> FeatGraph<'a> {
             // - Host instance always produces Host dependencies
             // - Target + build link -> Host
             // - Target + normal link -> Target
+            // - Proc-macro dependencies are always compiled for the host
             let dep_instance = match instance {
                 CrateInstance::Host => CrateInstance::Host,
                 CrateInstance::Target => {
-                    if dep.kind == cargo_metadata::DependencyKind::Build {
+                    if dep.kind == cargo_metadata::DependencyKind::Build || is_proc_macro(resolved)
+                    {
                         CrateInstance::Host
                     } else {
                         CrateInstance::Target
@@ -539,10 +546,21 @@ pub struct Pid<'a> {
     metadata: &'a Metadata,
 }
 
+fn is_proc_macro(package: &Package) -> bool {
+    package
+        .targets
+        .iter()
+        .any(|t| t.kind.contains(&cargo_metadata::TargetKind::ProcMacro))
+}
+
 impl<'a> Pid<'a> {
     #[must_use]
     pub fn package(self) -> &'a cargo_metadata::Package {
         &self.metadata.packages[self.key]
+    }
+
+    pub fn is_proc_macro(self) -> bool {
+        is_proc_macro(self.package())
     }
 }
 
