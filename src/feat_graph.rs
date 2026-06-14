@@ -838,10 +838,20 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     }
 
     fn node_color(&'a self, node: &NodeIndex) -> Option<dot::LabelText<'a>> {
-        self.focus_targets
-            .as_ref()?
-            .contains(node)
-            .then(|| dot::LabelText::LabelStr("pink".into()))
+        if self
+            .focus_targets
+            .as_ref()
+            .is_some_and(|t| t.contains(node))
+        {
+            Some(dot::LabelText::LabelStr("pink".into()))
+        } else if self.features[*node]
+            .fid()
+            .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        {
+            Some(dot::LabelText::LabelStr("lightblue".into()))
+        } else {
+            None
+        }
     }
 
     fn edge_end_arrow(&'a self, _e: &EdgeIndex) -> dot::Arrow {
@@ -861,7 +871,13 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     }
 
     fn edge_color(&'a self, e: &EdgeIndex) -> Option<dot::LabelText<'a>> {
-        if self.features[*e].optional {
+        let source = self.features.edge_endpoints(*e).unwrap().0;
+        if self.features[source]
+            .fid()
+            .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        {
+            Some(dot::LabelText::label("lightblue"))
+        } else if self.features[*e].optional {
             Some(dot::LabelText::label("grey"))
         } else {
             Some(dot::LabelText::label("black"))
