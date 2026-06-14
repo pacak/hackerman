@@ -357,7 +357,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             build_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
 
             debug!(
-                "Accumulated dev deps for {:?} are as following:{}",
+                "Accumulated build deps for {:?} are as following:{}",
                 member.package().name,
                 show_detached_dep_tree(&build_feats, fg),
             );
@@ -367,7 +367,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                     && ws_feats != feats
                     && let Some(&missing_feat) = ws_feats.difference(feats).next()
                 {
-                    debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
+                    debug!("\t{member:?} lacks build {}", fg.features[missing_feat]);
 
                     changed
                         .entry(member)
@@ -378,7 +378,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                         member_ix,
                         missing_feat,
                         false,
-                        DepKindInfo::DEV,
+                        DepKindInfo::BUILD,
                         CrateInstance::Target,
                     )?;
                     dfs.move_to(new_dep);

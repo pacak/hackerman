@@ -43,6 +43,11 @@ impl DepKindInfo {
         target: None,
     };
 
+    pub const BUILD: Self = Self {
+        kind: DependencyKind::Build,
+        target: None,
+    };
+
     fn satisfies(
         &self,
         source: Feature,

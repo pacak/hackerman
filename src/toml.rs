@@ -88,7 +88,7 @@ const LOCK_PATH: &[&str] = &["package", "metadata", "hackerman", "lock"];
 const STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash"];
 const NORM_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dependencies"];
 #[rustfmt::skip]
-const DEV_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dev-dependencies"];
+const BUILD_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "build-dependencies"];
 
 fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a mut Table> {
     for (ix, comp) in path.iter().enumerate() {
@@ -243,13 +243,13 @@ fn set_dependencies_toml(
     }
     stash.sort_values();
 
-    let dev_stash = get_table(toml, DEV_STASH_PATH)?;
-    dev_stash.set_position(999);
+    let build_stash = get_table(toml, BUILD_STASH_PATH)?;
+    build_stash.set_position(999);
     for (name, val) in saved.build {
-        dev_stash.insert(&name, val);
+        build_stash.insert(&name, val);
     }
 
-    dev_stash.sort_values();
+    build_stash.sort_values();
     if was_modified {
         add_banner(toml)?;
     }
