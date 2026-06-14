@@ -441,6 +441,12 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
                         .filter_map(|f| match fg.features[*f].fid()?.dep {
                             Feat::Base => None,
                             Feat::Named(name) => Some(name.to_string()),
+                            // `Feat::Dep` is the node that represents an
+                            // optional dependency being enabled, not a
+                            // feature of the parent crate. Enabling it
+                            // means turning the optional dep on, so it
+                            // doesn't belong in the parent's feature list.
+                            Feat::Dep(_) => None,
                         })
                         .collect::<BTreeSet<_>>();
                     let rename = renames

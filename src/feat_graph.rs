@@ -393,8 +393,10 @@ impl<'a> FeatGraph<'a> {
 
             // feature dependencies:
             //
-            // - optional dependencies are linked from named feature
-            // - requred dependenceis are linked fromb base
+            // - optional dependencies are linked from a node marked as
+            //   `Feat::Dep(<dep_name>)` so we can distinguish it from
+            //   real named features of the parent crate
+            // - required dependencies are linked from base
             let this = if dep.optional {
                 match dep.rename.as_ref() {
                     Some(name) => this
@@ -570,6 +572,14 @@ impl<'a> Pid<'a> {
             instance,
         }
     }
+    #[must_use]
+    pub const fn dep_node(self, name: &'a str, instance: CrateInstance) -> Fid<'a> {
+        Fid {
+            pid: self,
+            dep: Feat::Dep(name),
+            instance,
+        }
+    }
 }
 
 impl<'a> PartialEq for Pid<'a> {
@@ -612,7 +622,7 @@ impl<'a> Fid<'a> {
     pub(crate) fn name(self) -> Option<&'a str> {
         match self.dep {
             Feat::Named(n) => Some(n),
-            Feat::Base => None,
+            Feat::Base | Feat::Dep(_) => None,
         }
     }
 }
@@ -623,6 +633,7 @@ impl std::fmt::Display for Fid<'_> {
         match self.dep {
             Feat::Base => write!(f, "{id}"),
             Feat::Named(name) => write!(f, "{id}:{name}"),
+            Feat::Dep(name) => write!(f, "{id}:dep:{name}"),
         }?;
         match self.instance {
             CrateInstance::Host => write!(f, " (host)"),
@@ -636,6 +647,7 @@ impl std::fmt::Display for Feat<'_> {
         match self {
             Feat::Base => f.write_str(":base:"),
             Feat::Named(name) => f.write_str(name),
+            Feat::Dep(name) => write!(f, "dep:{name}"),
         }
     }
 }
@@ -646,6 +658,12 @@ pub enum Feat<'a> {
     Base,
     /// internally defined named feature
     Named(&'a str),
+    /// node representing an optional dependency. The `&'a str` is the
+    /// dependency's name (or rename) and matches the name used to refer
+    /// to it in `dep:<name>` feature syntax. It must NOT be reported as
+    /// a feature of the parent crate, since enabling it means
+    /// enabling the dependency, not a feature of the parent.
+    Dep(&'a str),
 }
 
 impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
@@ -685,7 +703,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
         let fid = self.features[*node].fid()?;
         match fid.dep {
             Feat::Base => Some(dot::LabelText::label("octagon")),
-            Feat::Named(_) => None,
+            Feat::Named(_) | Feat::Dep(_) => None,
         }
     }
 
@@ -707,6 +725,11 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
                     Feat::Base => {}
                     Feat::Named(name) => {
                         fmt.push('\n');
+                        fmt.push_str(name);
+                    }
+                    Feat::Dep(name) => {
+                        fmt.push('\n');
+                        fmt.push_str("dep:");
                         fmt.push_str(name);
                     }
                 }
