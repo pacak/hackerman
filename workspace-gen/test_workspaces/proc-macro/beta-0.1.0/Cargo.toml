@@ -1,8 +1,0 @@
-[package]
-name = "beta"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-macro-helper2 = { path = "../macro-helper2-0.1.0", features = [] }
-

@@ -1,4 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["dep_with-0.1.0", "dep_without-0.1.0"]
-exclude = ["log-0.1.0", "mio-0.1.0", "tokio_like-0.1.0"]

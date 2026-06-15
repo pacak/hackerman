@@ -1,4 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["alpha-0.1.0", "beta-0.1.0"]
-exclude = ["cc-0.1.0", "cmake_wrap-0.1.0", "lib_aws-0.1.0", "lib_sqlite-0.1.0"]

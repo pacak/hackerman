@@ -1,8 +1,0 @@
-[package]
-name = "models"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-quadprogpp = "0.1.0"
-

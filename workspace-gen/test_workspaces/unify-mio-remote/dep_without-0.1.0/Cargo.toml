@@ -1,8 +1,0 @@
-[package]
-name = "dep_without"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-tokio_like = { path = "../tokio_like-0.1.0", features = ["io_uring"] }
-

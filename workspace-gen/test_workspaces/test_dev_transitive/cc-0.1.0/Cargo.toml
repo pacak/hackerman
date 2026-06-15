@@ -1,7 +1,0 @@
-[package]
-name = "cc"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-parallel = []

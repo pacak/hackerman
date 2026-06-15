@@ -1,8 +1,0 @@
-[package]
-name = "beta"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-lib_aws = { path = "../lib_aws-0.1.0" }
-

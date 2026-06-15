@@ -1,6 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["market_time-0.1.0", "models-0.1.0"]
-exclude = ["cxx-0.1.0", "foldhash-0.1.0", "hashbrown-0.1.0", "quadprogpp-0.1.0", "quadprogpp_sys-0.1.0"]
-[patch.crates-io]
-quadprogpp = { path = "quadprogpp-0.1.0" }

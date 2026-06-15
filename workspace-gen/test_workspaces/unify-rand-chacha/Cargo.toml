@@ -1,4 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["cloud_utils-0.1.0", "num_complex-0.1.0"]
-exclude = ["rand-0.1.0", "rand_chacha-0.1.0"]
