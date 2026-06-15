@@ -1,6 +1,6 @@
 [package]
 name = "cargo-hackerman"
-version = "0.2.9"
+version = "0.2.10"
 edition = "2024"
 description = "Workspace hack management and package/feature query"
 license = "MIT OR Apache-2.0"
