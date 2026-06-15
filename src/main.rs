@@ -43,6 +43,39 @@ fn get_cfgs() -> anyhow::Result<Vec<Cfg>> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+fn get_platform(
+    meta: &cargo_metadata::Metadata,
+) -> Result<target_spec::Platform, target_spec::Error> {
+    use std::borrow::Cow;
+    use target_spec::*;
+
+    fn read_custom(meta: &cargo_metadata::Metadata) -> Option<Cow<'static, str>> {
+        let hm = meta.workspace_metadata.get("hackerman")?.as_object()?;
+        hm.get("platform")?
+            .as_str()
+            .map(|s| Cow::Owned(s.to_owned()))
+    }
+    fn read_features(meta: &cargo_metadata::Metadata) -> Option<BTreeSet<Cow<'static, str>>> {
+        let hm = meta.workspace_metadata.get("hackerman")?.as_object()?;
+
+        let zzz = hm
+            .get("features")?
+            .as_array()?
+            .iter()
+            .filter_map(|s| s.as_str().map(|s| Cow::Owned(s.to_owned())))
+            .collect();
+
+        Some(zzz)
+    }
+
+    let Some(custom) = read_custom(meta) else {
+        return Platform::build_target();
+    };
+    let feats = read_features(meta).unwrap_or_default();
+    let feats = target_spec::TargetFeatures::Features(feats);
+    Platform::new(custom, feats)
+}
+
 fn main() -> anyhow::Result<()> {
     let action = opts::action().fallback_to_usage().run();
 
@@ -50,7 +83,7 @@ fn main() -> anyhow::Result<()> {
         Action::Hack { profile, dry, lock } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             hack(dry, lock, &metadata, triplets, cfgs)?;
@@ -93,7 +126,7 @@ fn main() -> anyhow::Result<()> {
                     toml::verify_checksum(package.manifest_path.as_std_path())?;
                 }
             }
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             hack(true, false, &metadata, triplets, cfgs)?;
@@ -120,7 +153,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
@@ -148,7 +181,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
@@ -220,7 +253,7 @@ fn main() -> anyhow::Result<()> {
         Action::Dupes { profile } => {
             let mut any = false;
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
