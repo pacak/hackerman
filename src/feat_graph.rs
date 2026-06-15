@@ -220,6 +220,20 @@ impl<'a> FeatGraph<'a> {
                 CrateInstance::Target
             };
             graph.add_package(ix, package, &metadata.packages, instance)?;
+            // Process the opposite instance so that dependency edges exist
+            // for both Host and Target.  This matters when a non-proc-macro
+            // package (e.g. cxx-build) is reached as Host through a build-
+            // dependency edge but its dependency edges were only wired for
+            // Target.
+            graph.add_package(
+                ix,
+                package,
+                &metadata.packages,
+                match instance {
+                    CrateInstance::Host => CrateInstance::Target,
+                    CrateInstance::Target => CrateInstance::Host,
+                },
+            )?;
         }
 
         graph.rebuild_cache()?;
@@ -330,9 +344,16 @@ impl<'a> FeatGraph<'a> {
         let base_ix = self.fid_index(this.base(instance));
 
         let workspace_member = self.workspace_members.contains(&this);
+        let primary_instance = if is_proc_macro(package) {
+            CrateInstance::Host
+        } else {
+            CrateInstance::Target
+        };
 
         // root contains links to all the workspace members
-        if workspace_member && instance == CrateInstance::Target {
+        // Only add for the primary instance — the second call from init
+        // skips this to avoid giving proc-macro members a bogus root link.
+        if workspace_member && instance == CrateInstance::Target && instance == primary_instance {
             self.add_edge(
                 self.root,
                 this,
