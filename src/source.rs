@@ -187,7 +187,18 @@ impl PackageSource<'_> {
                 table.insert("version", toml_edit::Value::from(ver.to_string()));
             }
             PackageSource::Git(url) => {
-                table.insert("git", toml_edit::Value::from(*url));
+                if let Some((base, query)) = url.split_once('?') {
+                    table.insert("git", toml_edit::Value::from(base));
+                    for pair in query.split('&') {
+                        if let Some((key, value)) = pair.split_once('=') {
+                            if matches!(key, "rev" | "branch" | "tag") {
+                                table.insert(key, toml_edit::Value::from(value));
+                            }
+                        }
+                    }
+                } else {
+                    table.insert("git", toml_edit::Value::from(*url));
+                }
             }
             PackageSource::File { path } => {
                 table.insert("path", toml_edit::Value::from(path.to_string()));
