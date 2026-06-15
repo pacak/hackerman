@@ -323,9 +323,6 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'
             );
 
             for (&dep, feats) in &deps_feats {
-                if let Some(fid) = fg.features[dep].fid() {
-                    let dep_name = fid.pid.package().name.clone();
-                }
                 if let Some(ws_feats) = raw_workspace_feats.get(&dep)
                     && ws_feats != feats
                     && let Some(&missing_feat) = ws_feats.difference(feats).next()

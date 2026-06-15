@@ -326,11 +326,11 @@ impl<'a> FeatGraph<'a> {
         instance: CrateInstance,
     ) -> anyhow::Result<()> {
         // Proc macro crates are always compiled for the host, regardless of how they're reached
-        let instance = if package.targets.iter().any(|t| {
-            t.kind
-                .iter()
-                .any(|k| *k == cargo_metadata::TargetKind::ProcMacro)
-        }) {
+        let instance = if package
+            .targets
+            .iter()
+            .any(|t| t.kind.contains(&cargo_metadata::TargetKind::ProcMacro))
+        {
             CrateInstance::Host
         } else {
             instance

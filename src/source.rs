@@ -190,10 +190,10 @@ impl PackageSource<'_> {
                 if let Some((base, query)) = url.split_once('?') {
                     table.insert("git", toml_edit::Value::from(base));
                     for pair in query.split('&') {
-                        if let Some((key, value)) = pair.split_once('=') {
-                            if matches!(key, "rev" | "branch" | "tag") {
-                                table.insert(key, toml_edit::Value::from(value));
-                            }
+                        if let Some((key, value)) = pair.split_once('=')
+                            && matches!(key, "rev" | "branch" | "tag")
+                        {
+                            table.insert(key, toml_edit::Value::from(value));
                         }
                     }
                 } else {
