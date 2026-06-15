@@ -342,6 +342,10 @@ impl<'a> FeatGraph<'a> {
             metadata: self.metadata,
         };
         let base_ix = self.fid_index(this.base(instance));
+        self.fid_index(this.base(match instance {
+            CrateInstance::Host => CrateInstance::Target,
+            CrateInstance::Target => CrateInstance::Host,
+        }));
 
         let workspace_member = self.workspace_members.contains(&this);
         let primary_instance = if is_proc_macro(package) {
