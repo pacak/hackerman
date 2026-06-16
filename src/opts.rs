@@ -331,9 +331,9 @@ mod readme {
         use std::io::Read;
         use std::io::Seek;
         let mut file = std::fs::OpenOptions::new()
-            .write(true)
             .read(true)
             .create(true)
+            .append(true)
             .open(path)?;
         let mut current_val = String::new();
         file.read_to_string(&mut current_val)?;
