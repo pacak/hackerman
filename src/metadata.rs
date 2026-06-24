@@ -1,5 +1,5 @@
 use cargo_metadata::Dependency;
-use cargo_platform::Cfg;
+use cargo_metadata::cargo_platform::{Cfg, Platform};
 
 use crate::{feat_graph::Feature, hack::Collect};
 
@@ -29,7 +29,7 @@ impl From<cargo_metadata::DependencyKind> for DependencyKind {
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct DepKindInfo {
     pub kind: DependencyKind,
-    pub target: Option<cargo_platform::Platform>,
+    pub target: Option<Platform>,
 }
 
 impl DepKindInfo {
@@ -43,6 +43,11 @@ impl DepKindInfo {
         target: None,
     };
 
+    pub const BUILD: Self = Self {
+        kind: DependencyKind::Build,
+        target: None,
+    };
+
     fn satisfies(
         &self,
         source: Feature,
@@ -53,9 +58,9 @@ impl DepKindInfo {
         if self.kind == DependencyKind::Development {
             match filter {
                 Collect::AllTargets | Collect::Target | Collect::NoDev | Collect::NormalOnly => {
-                    return false
+                    return false;
                 }
-                Collect::MemberDev(pid) => {
+                Collect::MemberBuild(pid) => {
                     if let Some(this_fid) = source.fid() {
                         {
                             if this_fid.pid != pid {
@@ -74,7 +79,7 @@ impl DepKindInfo {
 
         self.target
             .as_ref()
-            .map_or(true, |p| p.matches(platforms[0], cfgs))
+            .is_none_or(|p| p.matches(platforms[0], cfgs))
     }
 }
 

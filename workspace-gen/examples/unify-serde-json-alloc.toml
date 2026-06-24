@@ -1,0 +1,45 @@
+# Workspace: Feature unification issue not detected
+#
+# Reproduces a case where one workspace member (`livetrader`) enables a
+# feature (`alloc`) on a third-party crate (`serde_json`) through a
+# transitive optional dependency (`jsonptr`), while another member
+# (`daily`) does not pull in that path.
+#
+# In the real-world case that motivated this test:
+#   - `jsonptr` declares `serde_json` as an *optional* dependency with
+#     `[dependencies.serde_json] features = ["alloc"]`
+#   - `jsonptr`'s `json` feature enables `dep:serde_json`
+#   - `livetrader` depends on `jsonptr` (with `json` enabled), so
+#     `serde_json` is pulled in with the `alloc` feature
+#   - `daily` does not depend on `jsonptr`, so when it is checked on its
+#     own `serde_json` has no `alloc` feature
+#   - the workspace as a whole unifies `serde_json` with `alloc`
+#
+# Hackerman should detect that `daily` is missing the `alloc` feature
+# on `serde_json`, but currently it does not.
+
+[workspace]
+name = "unify-serde-json-alloc"
+
+[[crates]]
+name = "serde_json"
+version = "0.1.0"
+features = { alloc = [], std = [], default = ["std"] }
+
+[[crates]]
+name = "jsonptr"
+version = "0.1.0"
+dependencies = { serde_json = { version = "0.1.0", optional = true, features = ["alloc"] } }
+features = { json = ["dep:serde_json"], std = [], default = ["std", "json"] }
+
+[[crates]]
+name = "livetrader"
+version = "0.1.0"
+workspace_member = true
+dependencies = { jsonptr = { version = "0.1.0" } }
+
+[[crates]]
+name = "daily"
+version = "0.1.0"
+workspace_member = true
+dependencies = { serde_json = { version = "0.1.0" } }

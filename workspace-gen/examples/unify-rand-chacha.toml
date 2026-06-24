@@ -1,0 +1,43 @@
+# Workspace: hackerman suggests a `dep:` syntax as a feature
+#
+# Reproduces a case where hackerman reports a `dep:<crate>` syntax as if
+# it were a real feature of the parent crate.
+#
+# In the real-world case that motivated this test:
+#   - `rand` declares `rand_chacha` as an *optional* dependency
+#   - `rand`'s `std_rng` feature enables it via `std_rng = ["dep:rand_chacha"]`
+#   - somewhere else in the workspace (e.g. `num_complex`) enables
+#     `rand/std_rng` as part of its own features
+#   - hackerman's check then suggests the dep crate (e.g. `cloud_utils`)
+#     add `rand = { features = ["default", "rand_chacha"] }`, but
+#     `rand_chacha` is not a feature of `rand` -- it is the name of the
+#     optional dependency
+#
+# The right suggestion is to add `rand = { features = ["std_rng"] }`,
+# which is the real feature whose activation turns the optional dep on.
+
+[workspace]
+name = "unify-rand-chacha"
+
+[[crates]]
+name = "rand_chacha"
+version = "0.1.0"
+features = { std = [] }
+
+[[crates]]
+name = "rand"
+version = "0.1.0"
+dependencies = { rand_chacha = { version = "0.1.0", optional = true, default_features = false } }
+features = { std = ["rand_chacha?/std"], std_rng = ["dep:rand_chacha"], default = ["std"] }
+
+[[crates]]
+name = "num_complex"
+version = "0.1.0"
+workspace_member = true
+dependencies = { rand = { version = "0.1.0", features = ["std_rng"] } }
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+dependencies = { rand = { version = "0.1.0" } }

@@ -1,0 +1,32 @@
+# Workspace C: Host vs Target Dependency Isolation
+#
+# Tests: host (build) dependencies are NOT unified with target (normal) dependencies
+
+[workspace]
+name = "build_conflict_simple"
+
+[[crates]]
+name = "codec"
+features = { decode = [], encode = [] }
+workspace_member = false
+
+[[crates]]
+name = "pass1"
+dependencies = { codec = ["encode"] }
+workspace_member = false
+
+[[crates]]
+name = "pass2"
+features = {  }
+dependencies = { codec = ["decode"] }
+workspace_member = false
+
+[[crates]]
+name = "alpha"
+build_dependencies = { pass1 = {} }
+workspace_member = true
+
+[[crates]]
+name = "beta"
+build_dependencies = { pass2 = {}}
+workspace_member = true

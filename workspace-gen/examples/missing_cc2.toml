@@ -1,0 +1,35 @@
+# Workspace: Missing External Dependency Entirely Absent from One Member
+#
+# Tests: when one workspace member depends on cc with "parallel" through
+# a build dependency chain, while another member has no dependency on cc
+# at all, the check command should detect that the second member is
+# missing the cc dependency (with the "parallel" feature).
+#
+# Structure:
+#   cloud_utils (member) --BUILD--> cc (with "parallel")
+#   market_time (member) --no deps--> (cc absent from tree entirely)
+#
+# cc with "parallel" is in the workspace feature set (from cloud_utils).
+# market_time should be flagged as needing to add cc with "parallel",
+# but the check command currently fails to detect this because it only
+# iterates over crates already present in a member's dependency tree.
+
+[workspace]
+name = "missing_cc2"
+
+[[crates]]
+name = "cc"
+version = "0.1.0"
+features = { parallel = [] }
+workspace_member = false
+
+[[crates]]
+name = "cloud_utils"
+version = "0.1.0"
+workspace_member = true
+build_dependencies = { cc = { version = "0.1.0", features = ["parallel"] } }
+
+[[crates]]
+name = "market_time"
+version = "0.1.0"
+workspace_member = true

@@ -23,7 +23,7 @@ fn optimize_feats(declared: &BTreeMap<String, Vec<String>>, requested: &mut BTre
 
 #[cfg(test)]
 mod tests {
-    use super::{optimize_feats, PackageSource};
+    use super::{PackageSource, optimize_feats};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn check(req: &[&str], decl: &[(&str, &[&str])], exp: &[&str]) {
@@ -124,7 +124,7 @@ impl<'a> ChangePackage<'a> {
         if let Some(src) = &package.source {
             let source = PackageSource::try_from(src.repr.as_str())?;
             Ok(ChangePackage {
-                name: package.name.clone(),
+                name: package.name.as_ref().to_string(),
                 ty,
                 version: package.version.clone(),
                 source,
@@ -150,7 +150,7 @@ impl<'a> ChangePackage<'a> {
                 }
             };
             Ok(ChangePackage {
-                name: package.name.clone(),
+                name: package.name.as_ref().to_string(),
                 ty,
                 version: package.version.clone(),
                 source,
@@ -187,7 +187,18 @@ impl PackageSource<'_> {
                 table.insert("version", toml_edit::Value::from(ver.to_string()));
             }
             PackageSource::Git(url) => {
-                table.insert("git", toml_edit::Value::from(*url));
+                if let Some((base, query)) = url.split_once('?') {
+                    table.insert("git", toml_edit::Value::from(base));
+                    for pair in query.split('&') {
+                        if let Some((key, value)) = pair.split_once('=')
+                            && matches!(key, "rev" | "branch" | "tag")
+                        {
+                            table.insert(key, toml_edit::Value::from(value));
+                        }
+                    }
+                } else {
+                    table.insert("git", toml_edit::Value::from(*url));
+                }
             }
             PackageSource::File { path } => {
                 table.insert("path", toml_edit::Value::from(path.to_string()));

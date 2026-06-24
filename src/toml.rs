@@ -5,7 +5,7 @@ use cargo_metadata::camino::{Utf8Path, Utf8PathBuf};
 use std::hash::{Hash, Hasher};
 use std::ops::{Index, IndexMut};
 use std::path::Path;
-use toml_edit::{value, Array, Decor, Document, InlineTable, Item, Table, Value};
+use toml_edit::{Array, Decor, DocumentMut, InlineTable, Item, Table, Value, value};
 use tracing::{debug, info};
 
 use crate::hack::Ty;
@@ -24,14 +24,14 @@ pub fn set_dependencies(
     changes: &[ChangePackage],
 ) -> anyhow::Result<()> {
     info!("updating {path}");
-    let mut toml = std::fs::read_to_string(path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(path)?.parse::<DocumentMut>()?;
 
     set_dependencies_toml(&mut toml, lock, changes)?;
     std::fs::write(path, toml.to_string())?;
     Ok(())
 }
 
-fn get_decor(toml: &mut Document) -> anyhow::Result<&mut Decor> {
+fn get_decor(toml: &mut DocumentMut) -> anyhow::Result<&mut Decor> {
     let (_key, item) = toml
         .as_table_mut()
         .iter_mut()
@@ -49,12 +49,14 @@ fn get_decor(toml: &mut Document) -> anyhow::Result<&mut Decor> {
     })
 }
 
-fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
+fn add_banner(toml: &mut DocumentMut) -> anyhow::Result<()> {
     let decor = get_decor(toml)?;
     match decor.prefix().and_then(|x| x.as_str()) {
         Some(old) => {
             if old.starts_with(BANNER) {
-                anyhow::bail!("Found an old banner while trying to hack a file. You should restore it first before hacking againt");
+                anyhow::bail!(
+                    "Found an old banner while trying to hack a file. You should restore it first before hacking againt"
+                );
             }
 
             let new = format!("{BANNER}{old}");
@@ -65,7 +67,7 @@ fn add_banner(toml: &mut Document) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn strip_banner(toml: &mut Document) -> anyhow::Result<bool> {
+fn strip_banner(toml: &mut DocumentMut) -> anyhow::Result<bool> {
     let decor = get_decor(toml)?;
     Ok(match decor.prefix().and_then(|x| x.as_str()) {
         Some(cur) => {
@@ -86,7 +88,7 @@ const LOCK_PATH: &[&str] = &["package", "metadata", "hackerman", "lock"];
 const STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash"];
 const NORM_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dependencies"];
 #[rustfmt::skip]
-const DEV_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "dev-dependencies"];
+const BUILD_STASH_PATH: &[&str] = &["package", "metadata", "hackerman", "stash", "build-dependencies"];
 
 fn get_table<'a>(mut table: &'a mut Table, path: &[&str]) -> anyhow::Result<&'a mut Table> {
     for (ix, comp) in path.iter().enumerate() {
@@ -122,7 +124,7 @@ fn add_checksum<H: Hasher>(item: &Item, hasher: &mut H) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_checksum(toml: &Document) -> anyhow::Result<i64> {
+fn get_checksum(toml: &DocumentMut) -> anyhow::Result<i64> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
     let t = match toml.as_item() {
@@ -176,7 +178,7 @@ fn compile_change_package(change: &ChangePackage) -> (Item, String) {
 #[derive(Default)]
 struct Stash {
     norm: Vec<(String, Item)>,
-    dev: Vec<(String, Item)>,
+    build: Vec<(String, Item)>,
 }
 
 impl Index<Ty> for Stash {
@@ -184,7 +186,7 @@ impl Index<Ty> for Stash {
 
     fn index(&self, index: Ty) -> &Self::Output {
         match index {
-            Ty::Dev => &self.dev,
+            Ty::Build => &self.build,
             Ty::Norm => &self.norm,
         }
     }
@@ -193,20 +195,22 @@ impl Index<Ty> for Stash {
 impl IndexMut<Ty> for Stash {
     fn index_mut(&mut self, index: Ty) -> &mut Self::Output {
         match index {
-            Ty::Dev => &mut self.dev,
+            Ty::Build => &mut self.build,
             Ty::Norm => &mut self.norm,
         }
     }
 }
 
 fn set_dependencies_toml(
-    toml: &mut Document,
+    toml: &mut DocumentMut,
     lock: bool,
     changes: &[ChangePackage],
 ) -> anyhow::Result<bool> {
     let mut was_modified = false;
     if toml.contains_key("target") {
-        anyhow::bail!("target filtered dependencies present in the workspace are not supported by split mode hack")
+        anyhow::bail!(
+            "target filtered dependencies present in the workspace are not supported by split mode hack"
+        )
     }
     let mut saved = Stash::default();
 
@@ -217,7 +221,7 @@ fn set_dependencies_toml(
         let old = table.insert(&name, item).unwrap_or_else(|| value(false));
         saved[change.ty].push((name, old));
     }
-    for &ty in &[Ty::Norm, Ty::Dev] {
+    for &ty in &[Ty::Norm, Ty::Build] {
         if !saved[ty].is_empty() {
             get_table(toml, &[ty.table_name()])?.sort_values();
         }
@@ -229,23 +233,23 @@ fn set_dependencies_toml(
         let lock_table = get_table(toml, LOCK_PATH)?;
         lock_table.insert("dependencies", value(hash));
         lock_table.sort_values();
-        lock_table.set_position(997);
+        lock_table.set_position(Some(997));
     }
 
     let stash = get_table(toml, NORM_STASH_PATH)?;
-    stash.set_position(998);
+    stash.set_position(Some(998));
     for (name, val) in saved.norm {
         stash.insert(&name, val);
     }
     stash.sort_values();
 
-    let dev_stash = get_table(toml, DEV_STASH_PATH)?;
-    dev_stash.set_position(999);
-    for (name, val) in saved.dev {
-        dev_stash.insert(&name, val);
+    let build_stash = get_table(toml, BUILD_STASH_PATH)?;
+    build_stash.set_position(Some(999));
+    for (name, val) in saved.build {
+        build_stash.insert(&name, val);
     }
 
-    dev_stash.sort_values();
+    build_stash.sort_values();
     if was_modified {
         add_banner(toml)?;
     }
@@ -253,7 +257,7 @@ fn set_dependencies_toml(
 }
 
 pub fn restore_path(manifest_path: &Path) -> anyhow::Result<bool> {
-    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<DocumentMut>()?;
     let changed = restore_toml(&mut toml)?;
     if changed {
         std::fs::write(manifest_path, toml.to_string())?;
@@ -262,7 +266,7 @@ pub fn restore_path(manifest_path: &Path) -> anyhow::Result<bool> {
 }
 
 pub fn restore(manifest_path: &Utf8Path) -> anyhow::Result<bool> {
-    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<DocumentMut>()?;
 
     info!("Restoring {manifest_path}");
     let changed = restore_toml(&mut toml).with_context(|| format!("in {manifest_path}"))?;
@@ -275,11 +279,11 @@ pub fn restore(manifest_path: &Utf8Path) -> anyhow::Result<bool> {
     Ok(changed)
 }
 
-fn restore_toml(toml: &mut Document) -> anyhow::Result<bool> {
+fn restore_toml(toml: &mut DocumentMut) -> anyhow::Result<bool> {
     let hackerman = get_table(toml, HACKERMAN_PATH)?;
     let mut changed = hackerman.remove("lock").is_some();
 
-    for ty in ["dependencies", "dev-dependencies"] {
+    for ty in ["dependencies", "dev-dependencies", "build-dependencies"] {
         let stash = match get_table(toml, STASH_PATH)?.remove(ty) {
             Some(Item::Table(t)) => t,
             Some(_) => anyhow::bail!("corrupted stash table"),
@@ -306,7 +310,7 @@ fn restore_toml(toml: &mut Document) -> anyhow::Result<bool> {
 }
 
 pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
-    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<Document>()?;
+    let mut toml = std::fs::read_to_string(manifest_path)?.parse::<DocumentMut>()?;
 
     let checksum = get_checksum(&toml)?;
 
@@ -314,11 +318,7 @@ pub fn verify_checksum(manifest_path: &Path) -> anyhow::Result<()> {
     if lock_table.is_empty() {
         return Ok(());
     }
-    if lock_table
-        .get("dependencies")
-        .and_then(Item::as_integer)
-        .map_or(false, |l| l == checksum)
-    {
+    if lock_table.get("dependencies").and_then(Item::as_integer) == Some(checksum) {
         anyhow::bail!("Checksum mismatch in {manifest_path:?}")
     }
 
@@ -341,7 +341,7 @@ mod tests {
 [target.'cfg(target_os = "android")'.dependencies]
 package = 1.0
 "#
-        .parse::<Document>()?;
+        .parse::<DocumentMut>()?;
 
         let hash = get_checksum(&toml)?;
         assert_eq!(hash, 2329902156198620770);
@@ -356,7 +356,7 @@ by_version_1 = "1.0"
 by_version_2 = { version = "1.0", features = ["one", "two"] }
 from_git = { git = "https://github.com/rust-lang/regex" }
 "#
-        .parse::<Document>()?;
+        .parse::<DocumentMut>()?;
 
         let hash = get_checksum(&toml)?;
 
@@ -410,7 +410,7 @@ version = 1.0
 [dependencies]
 package = 1.0
 "#
-        .parse::<Document>()?;
+        .parse::<DocumentMut>()?;
 
         let mut feats = BTreeSet::new();
         feats.insert("dummy".to_string());
@@ -440,30 +440,30 @@ package = 1.0
         Ok(())
     }
     /*
-        #[test]
-        fn set_dependencies_works_1() -> anyhow::Result<()> {
-            let mut toml = r#"
+    #[test]
+    fn set_dependencies_works_1() -> anyhow::Result<()> {
+        let mut toml = r#"
     [target.'cfg(target_os = "linux")'.dependencies]
     package = 1.0
     "#
-            .parse::<Document>()?;
+        .parse::<DocumentMut>()?;
 
-            let mut feats = BTreeSet::new();
-            feats.insert("dummy".to_string());
+        let mut feats = BTreeSet::new();
+        feats.insert("dummy".to_string());
 
-            let changes = [ChangePackage {
-                name: "package".to_string(),
-                ty: Ty::Norm,
-                version: Version::new(1, 0, 0),
-                source: PackageSource::CRATES_IO,
-                feats,
-                rename: false,
-            }];
+        let changes = [ChangePackage {
+            name: "package".to_string(),
+            ty: Ty::Norm,
+            version: Version::new(1, 0, 0),
+            source: PackageSource::CRATES_IO,
+            feats,
+            rename: false,
+        }];
 
-            set_dependencies_toml(&mut toml, false, &changes)?;
+        set_dependencies_toml(&mut toml, false, &changes)?;
 
-            todo!("{toml}");
+        todo!("{toml}");
 
-            Ok(())
-        }*/
+        Ok(())
+    }*/
 }

@@ -8,18 +8,18 @@ use cargo_hackerman::{
     toml,
 };
 use cargo_metadata::camino::Utf8PathBuf;
-use cargo_platform::Cfg;
+use cargo_metadata::cargo_platform::Cfg;
 use std::{
     collections::{BTreeMap, BTreeSet},
     process::Command,
     str::FromStr,
 };
 use tracing::Level;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn start_subscriber((_, level): (usize, Level)) {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| (EnvFilter::default().add_directive(level.into())));
+        .unwrap_or_else(|_| EnvFilter::default().add_directive(level.into()));
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .without_time()
@@ -43,22 +43,50 @@ fn get_cfgs() -> anyhow::Result<Vec<Cfg>> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+fn get_platform(
+    meta: &cargo_metadata::Metadata,
+) -> Result<target_spec::Platform, target_spec::Error> {
+    use std::borrow::Cow;
+    use target_spec::*;
+
+    fn read_custom(meta: &cargo_metadata::Metadata) -> Option<Cow<'static, str>> {
+        let hm = meta.workspace_metadata.get("hackerman")?.as_object()?;
+        hm.get("platform")?
+            .as_str()
+            .map(|s| Cow::Owned(s.to_owned()))
+    }
+    fn read_features(meta: &cargo_metadata::Metadata) -> Option<BTreeSet<Cow<'static, str>>> {
+        let hm = meta.workspace_metadata.get("hackerman")?.as_object()?;
+
+        let zzz = hm
+            .get("features")?
+            .as_array()?
+            .iter()
+            .filter_map(|s| s.as_str().map(|s| Cow::Owned(s.to_owned())))
+            .collect();
+
+        Some(zzz)
+    }
+
+    let Some(custom) = read_custom(meta) else {
+        return Platform::build_target();
+    };
+    let feats = read_features(meta).unwrap_or_default();
+    let feats = target_spec::TargetFeatures::Features(feats);
+    Platform::new(custom, feats)
+}
+
 fn main() -> anyhow::Result<()> {
     let action = opts::action().fallback_to_usage().run();
 
     match action {
-        Action::Hack {
-            profile,
-            dry,
-            lock,
-            no_dev,
-        } => {
+        Action::Hack { profile, dry, lock } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(dry, lock, no_dev, &metadata, triplets, cfgs)?;
+            hack(dry, lock, &metadata, triplets, cfgs)?;
 
             // regenerate Cargo.lock file
             if !dry {
@@ -89,7 +117,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Action::Check { profile, no_dev } => {
+        Action::Check { profile } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
             let members = metadata.workspace_members.iter().collect::<BTreeSet<_>>();
@@ -98,10 +126,10 @@ fn main() -> anyhow::Result<()> {
                     toml::verify_checksum(package.manifest_path.as_std_path())?;
                 }
             }
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
-            hack(true, false, no_dev, &metadata, triplets, cfgs)?;
+            hack(true, false, &metadata, triplets, cfgs)?;
         }
 
         Action::MergeDriver {
@@ -125,7 +153,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
@@ -133,7 +161,7 @@ fn main() -> anyhow::Result<()> {
             tree(
                 &mut fg,
                 krate.as_ref(),
-                feature.as_ref(),
+                feature.as_deref(),
                 version.as_ref(),
                 package_nodes,
                 workspace,
@@ -153,7 +181,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             start_subscriber(profile.verbosity);
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
@@ -162,7 +190,7 @@ fn main() -> anyhow::Result<()> {
             explain(
                 &mut fg,
                 &krate,
-                feature.as_ref(),
+                feature.as_deref(),
                 version.as_ref(),
                 package_nodes,
                 stdout,
@@ -180,10 +208,7 @@ fn main() -> anyhow::Result<()> {
                 .packages
                 .iter()
                 .find(|p| {
-                    p.name == krate
-                        && version
-                            .as_ref()
-                            .map_or(true, |v| &p.version.to_string() == v)
+                    p.name == krate && version.as_ref().is_none_or(|v| &p.version.to_string() == v)
                 })
                 .ok_or_else(|| anyhow::anyhow!("{krate} {version:?} is not used"))?;
 
@@ -228,7 +253,7 @@ fn main() -> anyhow::Result<()> {
         Action::Dupes { profile } => {
             let mut any = false;
             let metadata = profile.exec()?;
-            let platform = target_spec::Platform::current()?;
+            let platform = get_platform(&metadata)?;
             let triplets = vec![platform.triple_str()];
             let cfgs = get_cfgs()?;
             let mut fg = FeatGraph::init(&metadata, triplets, cfgs)?;
@@ -269,7 +294,7 @@ fn open_url(url: &str) -> anyhow::Result<()> {
     } else if cfg!(target_os = "windows") {
         Command::new("start").arg(url).output()?;
     } else {
-        #[cfg(feature = "webbroser")]
+        #[cfg(feature = "webbrowser")]
         {
             webbrowser::open(url)?;
             return Ok(());

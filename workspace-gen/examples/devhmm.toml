@@ -1,0 +1,49 @@
+# Workspace C: Host vs Target Dependency Isolation
+#
+# Tests: host (build) dependencies are NOT unified with target (normal) dependencies
+#
+# - alpha has normal dep on codec with features ["decode"]
+# - alpha has build-dep on codec with features ["encode"]
+# - beta has normal dep on codec with features ["encode", "optimize"]
+# - beta has build-dep on codec with features ["decode"]
+# - gamma has normal dep on codec and dev-dep on codec with different features
+#
+# Resolution:
+# - Normal codec (target): features ["decode", "encode", "optimize"] unified
+# - Build codec (host): features ["encode", "decode"] unified (separate from normal)
+# - Dev codec (host): features ["test"] (separate from normal)
+#
+# proc-macro deps also run on host and don't unify with target deps
+
+[workspace]
+name = "devhmm"
+
+[[crates]]
+name = "codec"
+features = { decode = [], encode = [], optimize = [], test = [], serialize = [] }
+
+[[crates]]
+name = "pass1"
+dependencies = { codec = { features = ["encode"] } }
+
+[[crates]]
+name = "pass2"
+features = {  }
+dependencies = { codec = { features = ["decode"] } }
+
+
+
+
+[[crates]]
+name = "alpha"
+dependencies = { codec = { features = ["decode"] } }
+dev_dependencies = { pass1 = {}}
+build_dependencies = { pass1 = {} }
+workspace_member = true
+
+[[crates]]
+name = "beta"
+dependencies = { codec = { features = ["optimize"] } }
+build_dependencies = { pass2 = {}}
+dev_dependencies = { pass2 = {}}
+workspace_member = true

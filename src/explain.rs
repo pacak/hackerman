@@ -1,5 +1,5 @@
 use crate::{
-    feat_graph::{FeatGraph, HasIndex},
+    feat_graph::{CrateInstance, FeatGraph, HasIndex},
     metadata::{DepKindInfo, Link},
 };
 
@@ -11,27 +11,28 @@ use semver::Version;
 use std::collections::BTreeSet;
 use tracing::{debug, info};
 
+/// Find all the packages that can be a starting point for a query to display (display purposes)
+///
+/// Match all crates by name, with refining by a feature name and/or version number
 fn collect_packages(
     fg: &mut FeatGraph,
-
     krate: &str,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
 ) -> Vec<NodeIndex> {
     fg.features
         .node_indices()
         .filter(|&ix| {
-            if let Some(fid) = fg.features[ix].fid() {
-                let package = fid.pid.package();
-                // name must match.
-                // feature must match if given, otherwise look for base
-                // version must match if given
-                package.name == krate
-                    && feature.map_or(fid.pid.base() == fid, |f| fid.pid.named(f) == fid)
-                    && version.map_or(true, |v| package.version == *v)
-            } else {
-                false
-            }
+            let Some(fid) = fg.features[ix].fid() else {
+                return false;
+            };
+            let package = fid.pid.package();
+            // name must match.
+            // feature must match if given, otherwise look for base
+            // version must match if given
+            package.name == krate
+                && version.is_none_or(|v| package.version == *v)
+                && (feature.is_none() || feature == fid.name())
         })
         .collect::<Vec<_>>()
 }
@@ -39,7 +40,7 @@ fn collect_packages(
 pub fn tree<'a>(
     fg: &'a mut FeatGraph<'a>,
     krate: Option<&String>,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
     package_nodes: bool,
     workspace: bool,
@@ -54,7 +55,7 @@ pub fn tree<'a>(
             let members = fg.workspace_members.clone();
             members
                 .iter()
-                .map(|f| fg.fid_index(f.base()))
+                .map(|f| fg.fid_index(f.base(CrateInstance::Target)))
                 .collect::<Vec<_>>()
         }
     };
@@ -82,6 +83,7 @@ pub fn tree<'a>(
                 node
             };
             nodes.insert(this_node);
+
             for edge in g.edges_directed(node, petgraph::EdgeDirection::Outgoing) {
                 if package_nodes {
                     new_edges.insert((
@@ -97,7 +99,7 @@ pub fn tree<'a>(
 
     if package_nodes {
         for (a, b) in new_edges {
-            let a = a.get_index(fg)?;
+            let a = a.get_index(fg, CrateInstance::Target)?;
             if a != b {
                 let link = Link {
                     optional: false,
@@ -119,7 +121,7 @@ pub fn tree<'a>(
 pub fn explain<'a>(
     fg: &'a mut FeatGraph<'a>,
     krate: &str,
-    feature: Option<&String>,
+    feature: Option<&str>,
     version: Option<&Version>,
     package_nodes: bool,
     stdout: bool,
@@ -178,7 +180,7 @@ pub fn explain<'a>(
 
     if package_nodes {
         for (a, b) in new_edges {
-            let a = a.get_index(fg)?;
+            let a = a.get_index(fg, CrateInstance::Target)?;
             if a != b {
                 let link = Link {
                     optional: false,

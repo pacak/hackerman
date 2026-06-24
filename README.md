@@ -217,7 +217,7 @@ You can pass **`--help`** twice for more detailed help
 
 Unify crate dependencies across individual crates in the workspace
 
-**Usage**: **`cargo hackerman`** **`hack`** _`CARGO_OPTS`_ \[**`--dry`**\] \[**`--lock`**\] \[**`-D`**\]
+**Usage**: **`cargo hackerman`** **`hack`** _`CARGO_OPTS`_ \[**`--dry`**\] \[**`--lock`**\]
 
 You can undo those changes using `cargo hackerman restore`.
 
@@ -251,8 +251,6 @@ You can undo those changes using `cargo hackerman restore`.
   lock = true
   ```
 
-- **`-D`**, **`--no-dev`** &mdash; 
-  Don't unify dev dependencies
 - **`-h`**, **`--help`** &mdash; 
   Prints help information
 
@@ -300,7 +298,7 @@ Check if unification is required and if checksums are correct
 
 Similar to `cargo-hackerman hack --dry`, but also sets exit status to 1 so you can use it as part of CI process
 
-**Usage**: **`cargo hackerman`** **`check`** _`CARGO_OPTS`_ \[**`-D`**\]
+**Usage**: **`cargo hackerman`** **`check`** _`CARGO_OPTS`_
 
 **Cargo options:**
 - **`    --manifest-path`**=_`PATH`_ &mdash; 
@@ -317,8 +315,6 @@ Similar to `cargo-hackerman hack --dry`, but also sets exit status to 1 so you c
 
 
 **Available options:**
-- **`-D`**, **`--no-dev`** &mdash; 
-  Don't unify dev dependencies
 - **`-h`**, **`--help`** &mdash; 
   Prints help information
 

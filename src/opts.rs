@@ -1,4 +1,4 @@
-use bpaf::{doc::Style, positional, short, Bpaf, Parser};
+use bpaf::{Bpaf, Parser, doc::Style, positional, short};
 use cargo_metadata::Metadata;
 use semver::Version;
 use std::{path::PathBuf, str::FromStr};
@@ -51,10 +51,6 @@ pub enum Action {
         /// ```
         ///
         lock: bool,
-
-        /// Don't unify dev dependencies
-        #[bpaf(short('D'), long)]
-        no_dev: bool,
     },
 
     /// Remove crate dependency unification added by the `hack` command
@@ -76,10 +72,6 @@ pub enum Action {
     Check {
         #[bpaf(external(profile))]
         profile: Profile,
-
-        /// Don't unify dev dependencies
-        #[bpaf(short('D'), long)]
-        no_dev: bool,
     },
 
     /// Restore files and merge with the default merge driver
@@ -339,9 +331,9 @@ mod readme {
         use std::io::Read;
         use std::io::Seek;
         let mut file = std::fs::OpenOptions::new()
-            .write(true)
             .read(true)
             .create(true)
+            .append(true)
             .open(path)?;
         let mut current_val = String::new();
         file.read_to_string(&mut current_val)?;

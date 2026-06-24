@@ -1,15 +1,22 @@
 use crate::hack::Collect;
 use crate::metadata::{DepKindInfo, Link};
-use cargo_metadata::{Metadata, Package, PackageId, Source};
-use cargo_platform::Cfg;
+use cargo_metadata::{Metadata, Package, PackageId, Source, cargo_platform::Cfg};
 use dot::{GraphWalk, Labeller};
+use petgraph::Graph;
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::{Dfs, EdgeFiltered, EdgeRef};
-use petgraph::Graph;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Index;
 use tracing::{debug, error, info, trace};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CrateInstance {
+    /// Crate is compiled for the host (build scripts, proc macros)
+    Host,
+    /// Crate is compiled for the target
+    Target,
+}
 
 #[derive(Copy, Clone, Ord, PartialEq, Eq, PartialOrd, Debug)]
 /// An node for feature graph
@@ -47,8 +54,8 @@ impl<'a> Feature<'a> {
 
     #[must_use]
     pub fn package_id(&self) -> Option<&PackageId> {
-        let Pid(pid, meta) = self.pid()?;
-        Some(&meta.packages[pid].id)
+        let Pid { key, metadata } = self.pid()?;
+        Some(&metadata.packages[key].id)
     }
 
     #[must_use]
@@ -76,7 +83,7 @@ pub struct FeatGraph<'a> {
     pub fid_cache: BTreeMap<Fid<'a>, NodeIndex>,
 
     /// cargo metadata
-    meta: &'a Metadata,
+    metadata: &'a Metadata,
 
     pub platforms: Vec<&'a str>,
     pub cfgs: Vec<Cfg>,
@@ -91,7 +98,7 @@ impl<'a> Index<Pid<'a>> for FeatGraph<'a> {
     type Output = NodeIndex;
 
     fn index(&self, index: Pid<'a>) -> &Self::Output {
-        &self.fid_cache[&index.root()]
+        &self.fid_cache[&index.root(CrateInstance::Target)]
     }
 }
 
@@ -167,26 +174,26 @@ impl<'a> FeatGraph<'a> {
     }
 
     pub fn init(
-        meta: &'a Metadata,
+        metadata: &'a Metadata,
         platforms: Vec<&'a str>,
         cfgs: Vec<Cfg>,
     ) -> anyhow::Result<Self> {
-        if meta.resolve.is_none() {
+        if metadata.resolve.is_none() {
             anyhow::bail!("Cargo couldn't produce resolved dependencies")
         }
 
-        let cache = meta
+        let cache = metadata
             .packages
             .iter()
             .enumerate()
-            .map(|(ix, package)| (&package.id, Pid(ix, meta)))
+            .map(|(key, package)| (&package.id, Pid { key, metadata }))
             .collect::<BTreeMap<_, _>>();
 
         let mut features = Graph::new();
         let root = features.add_node(Feature::Root);
 
         let mut graph = Self {
-            workspace_members: meta
+            workspace_members: metadata
                 .workspace_members
                 .iter()
                 .filter_map(|pid| cache.get(pid))
@@ -199,15 +206,34 @@ impl<'a> FeatGraph<'a> {
             triggers: Vec::new(),
             fid_cache: BTreeMap::new(),
             cache,
-            meta,
+            metadata,
             cfgs,
             focus_nodes: None,
             focus_edges: None,
             focus_targets: None,
         };
 
-        for (ix, package) in meta.packages.iter().enumerate() {
-            graph.add_package(ix, package, &meta.packages)?;
+        for (ix, package) in metadata.packages.iter().enumerate() {
+            let instance = if is_proc_macro(package) {
+                CrateInstance::Host
+            } else {
+                CrateInstance::Target
+            };
+            graph.add_package(ix, package, &metadata.packages, instance)?;
+            // Process the opposite instance so that dependency edges exist
+            // for both Host and Target.  This matters when a non-proc-macro
+            // package (e.g. cxx-build) is reached as Host through a build-
+            // dependency edge but its dependency edges were only wired for
+            // Target.
+            graph.add_package(
+                ix,
+                package,
+                &metadata.packages,
+                match instance {
+                    CrateInstance::Host => CrateInstance::Target,
+                    CrateInstance::Target => CrateInstance::Host,
+                },
+            )?;
         }
 
         graph.rebuild_cache()?;
@@ -294,19 +320,51 @@ impl<'a> FeatGraph<'a> {
 
     fn add_package(
         &mut self,
-        ix: usize,
+        key: usize,
         package: &'a Package,
         packages: &'a [Package],
+        instance: CrateInstance,
     ) -> anyhow::Result<()> {
-        debug!("== adding package {}", package.id);
-        let this = Pid(ix, self.meta);
-        let base_ix = self.fid_index(this.base());
+        // Proc macro crates are always compiled for the host, regardless of how they're reached
+        let instance = if package
+            .targets
+            .iter()
+            .any(|t| t.kind.contains(&cargo_metadata::TargetKind::ProcMacro))
+        {
+            CrateInstance::Host
+        } else {
+            instance
+        };
+
+        debug!("== adding package {} ({:?})", package.id, instance);
+        let this = Pid {
+            key,
+            metadata: self.metadata,
+        };
+        let base_ix = self.fid_index(this.base(instance));
+        self.fid_index(this.base(match instance {
+            CrateInstance::Host => CrateInstance::Target,
+            CrateInstance::Target => CrateInstance::Host,
+        }));
 
         let workspace_member = self.workspace_members.contains(&this);
+        let primary_instance = if is_proc_macro(package) {
+            CrateInstance::Host
+        } else {
+            CrateInstance::Target
+        };
 
         // root contains links to all the workspace members
-        if workspace_member {
-            self.add_edge(self.root, this, false, DepKindInfo::NORMAL)?;
+        // Only add for the primary instance — the second call from init
+        // skips this to avoid giving proc-macro members a bogus root link.
+        if workspace_member && instance == CrateInstance::Target && instance == primary_instance {
+            self.add_edge(
+                self.root,
+                this,
+                false,
+                DepKindInfo::NORMAL,
+                CrateInstance::Target,
+            )?;
         }
 
         // resolve and cache crate dependencies and create a cache mapping name to dep
@@ -317,24 +375,37 @@ impl<'a> FeatGraph<'a> {
                 continue;
             }
 
-            let source_matches = |a: Option<&Source>, b: Option<&String>| match (a, b) {
+            let source_matches = |a: Option<&Source>, b: Option<&Source>| match (a, b) {
                 (None, None) => true,
                 (Some(a), Some(b)) => {
-                    if &a.repr == b || (a.repr.starts_with("git") && a.repr.starts_with(b)) {
+                    if a == b || (a.repr.starts_with("git") && a.repr.starts_with(&b.repr)) {
                         true
                     } else {
-                        trace!("ignoring a candidate {package:?} for {dep:?} due to source mismatch: {a:?} != {b:?}");
+                        trace!(
+                            "ignoring a candidate {package:?} for {dep:?} due to source mismatch: {a:?} != {b:?}"
+                        );
                         false
                     }
                 }
                 _ => false,
             };
             // get resolved package - should be there in at most one matching copy...
-            let resolved = match packages.iter().find(|p| {
-                p.name == dep.name
-                    && dep.req.matches(&p.version)
-                    && source_matches(p.source.as_ref(), dep.source.as_ref())
-            }) {
+            // Prefer a candidate whose source matches the dep's declared source;
+            // fall back to any candidate matching by name+version so that
+            // `[patch]` redirects are still handled.
+            let resolved = packages
+                .iter()
+                .find(|p| {
+                    p.name == dep.name
+                        && dep.req.matches(&p.version)
+                        && source_matches(p.source.as_ref(), dep.source.as_ref())
+                })
+                .or_else(|| {
+                    packages
+                        .iter()
+                        .find(|p| p.name == dep.name && dep.req.matches(&p.version))
+                });
+            let resolved = match resolved {
                 Some(res) => res,
                 None => {
                     debug!(
@@ -346,15 +417,33 @@ impl<'a> FeatGraph<'a> {
                 }
             };
 
+            // Determine the instance of the dependency:
+            // - Host instance always produces Host dependencies
+            // - Target + build link -> Host
+            // - Target + normal link -> Target
+            // - Proc-macro dependencies are always compiled for the host
+            let dep_instance = match instance {
+                CrateInstance::Host => CrateInstance::Host,
+                CrateInstance::Target => {
+                    if dep.kind == cargo_metadata::DependencyKind::Build || is_proc_macro(resolved)
+                    {
+                        CrateInstance::Host
+                    } else {
+                        CrateInstance::Target
+                    }
+                }
+            };
+
             // feature dependencies:
             //
-            // - optional dependencies are linked from named feature
-            // - requred dependenceis are linked fromb base
+            // - optional dependencies are linked from a node marked as
+            //   `Feat::Dep(<dep_name>)` so we can distinguish it from
+            //   real named features of the parent crate
+            // - required dependencies are linked from base
             let this = if dep.optional {
-                match dep.rename.as_ref() {
-                    Some(name) => this.named(name).get_index(self)?,
-                    None => this.named(&dep.name).get_index(self)?,
-                }
+                let name = dep.rename.as_deref().unwrap_or(dep.name.as_ref());
+                this.dep_node(name, dep_instance)
+                    .get_index(self, dep_instance)?
             } else {
                 base_ix
             };
@@ -362,60 +451,132 @@ impl<'a> FeatGraph<'a> {
             //  dependencies that have default target are linked to that target
             //  otherwise dependencies are linked to
             let remote = if dep.uses_default_features {
-                Some(self.add_edge(this, resolved, false, dep.into())?)
+                Some(self.add_edge(this, resolved, false, dep.into(), dep_instance)?)
             } else if let Some(pid) = self.cache.get(&resolved.id) {
-                let fid = pid.base();
-                Some(self.add_edge(this, fid, false, dep.into())?)
+                let fid = pid.base(dep_instance);
+                Some(self.add_edge(this, fid, false, dep.into(), dep_instance)?)
             } else {
                 None
             };
             // if additional features on dependency are required - we add them all
             for feat in &dep.features {
-                self.add_edge(this, (resolved, feat.as_str()), false, dep.into())?;
+                self.add_edge(
+                    this,
+                    (resolved, feat.as_str()),
+                    false,
+                    dep.into(),
+                    dep_instance,
+                )?;
             }
 
             // for remote dependencies we store the resolved ifo in order to deal with renames
             if let Some(remote) = remote {
-                let name = dep.rename.clone().unwrap_or_else(|| resolved.name.clone());
-                deps.insert(name, (resolved, dep, remote));
+                let name = dep
+                    .rename
+                    .as_ref()
+                    .map_or(resolved.name.as_str().to_string(), |n| n.clone());
+
+                // For optional dependencies, `this` is the named feature
+                // representing the dep (e.g. `crate/<dep_name>`). It is the
+                // node that `dep:<dep_name>` syntax in features should
+                // enable, so we remember it for later use in the feature
+                // loop.
+                let named = if dep.optional { Some(this) } else { None };
+                deps.insert(name, (resolved, dep, remote, dep_instance, named));
             }
         }
 
         for (this_feat, feat_deps) in &package.features {
-            let feat_ix = self.fid_index(this.named(this_feat));
-            self.add_edge(feat_ix, base_ix, false, DepKindInfo::NORMAL)?;
+            let feat_ix = self.fid_index(this.named(this_feat, instance));
+            self.add_edge(feat_ix, base_ix, false, DepKindInfo::NORMAL, instance)?;
 
             for feat_dep in feat_deps.iter() {
                 match FeatTarget::from(feat_dep.as_str()) {
                     FeatTarget::Named { name } => {
-                        self.add_edge(feat_ix, this.named(name), false, DepKindInfo::NORMAL)?;
+                        self.add_edge(
+                            feat_ix,
+                            this.named(name, instance),
+                            false,
+                            DepKindInfo::NORMAL,
+                            instance,
+                        )?;
                     }
                     FeatTarget::Dependency { krate } => {
-                        if let Some(&(_dep, link, remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, remote, true, link.into())?;
+                        if let Some(&(_pkg, _link, _remote, _dep_instance, named)) = deps.get(krate)
+                        {
+                            // `dep:<krate>` enables the optional dep. The
+                            // activation has to go through the named
+                            // feature (e.g. `crate/<dep_name>`) so that
+                            // the explicit features the dep was declared
+                            // with (`dep.features`) are also picked up
+                            // when the resulting graph is walked.
+                            let Some(named) = named else {
+                                debug!("dep:<{krate}> only applies to optional dependencies");
+                                continue;
+                            };
+                            self.add_edge(feat_ix, named, true, DepKindInfo::NORMAL, instance)?;
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
                     }
                     FeatTarget::Remote { krate, feat } => {
-                        if let Some(&(dep, link, _remote)) = deps.get(krate) {
-                            self.add_edge(feat_ix, (dep, feat), true, link.into())?;
+                        if let Some(&(pkg, link, _remote, dep_instance, _named)) = deps.get(krate) {
+                            if link.optional {
+                                let weak_dep = this.dep_node(krate, dep_instance);
+                                self.add_edge(
+                                    feat_ix,
+                                    weak_dep,
+                                    true,
+                                    DepKindInfo::NORMAL,
+                                    instance,
+                                )?;
+                                if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                    let weak_feat = pid.named(feat, dep_instance);
+                                    self.fid_index(weak_feat);
+                                    let trigger = Trigger {
+                                        package: this,
+                                        feature: this.named(this_feat, instance),
+                                        weak_dep,
+                                        weak_feat,
+                                    };
+                                    self.triggers.push(trigger);
+                                }
+                            } else if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                self.add_edge(
+                                    feat_ix,
+                                    pid.named(feat, dep_instance),
+                                    true,
+                                    link.into(),
+                                    dep_instance,
+                                )?;
+                            }
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
                     }
                     FeatTarget::Cond { krate, feat } => {
-                        if let Some(dep) = deps
-                            .get(krate)
-                            .and_then(|&(dep, _link, _remote)| self.cache.get(&dep.id).copied())
-                        {
-                            let trigger = Trigger {
-                                package: this,
-                                feature: this.named(this_feat),
-                                weak_dep: this.named(krate),
-                                weak_feat: dep.named(feat),
-                            };
-                            self.triggers.push(trigger);
+                        if let Some(&(pkg, link, _remote, dep_instance, _named)) = deps.get(krate) {
+                            if link.optional {
+                                if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                    let weak_feat = pid.named(feat, dep_instance);
+                                    self.fid_index(weak_feat);
+                                    let trigger = Trigger {
+                                        package: this,
+                                        feature: this.named(this_feat, instance),
+                                        weak_dep: this.dep_node(krate, dep_instance),
+                                        weak_feat,
+                                    };
+                                    self.triggers.push(trigger);
+                                }
+                            } else if let Some(pid) = self.cache.get(&pkg.id).copied() {
+                                self.add_edge(
+                                    feat_ix,
+                                    pid.named(feat, dep_instance),
+                                    true,
+                                    link.into(),
+                                    dep_instance,
+                                )?;
+                            }
                         } else {
                             debug!("skipping disabled optional dependency {krate}");
                         }
@@ -433,13 +594,14 @@ impl<'a> FeatGraph<'a> {
         b: B,
         optional: bool,
         kind: DepKindInfo,
+        _source_instance: CrateInstance,
     ) -> anyhow::Result<NodeIndex>
     where
         A: HasIndex<'a>,
         B: HasIndex<'a>,
     {
-        let a = a.get_index(self)?;
-        let b = b.get_index(self)?;
+        let a = a.get_index(self, _source_instance)?;
+        let b = b.get_index(self, _source_instance)?;
         trace!(
             "adding {}edge {a:?} -> {b:?}: {kind:?}\n\t{:?}\n\t{:?}",
             if optional { "optional " } else { "" },
@@ -465,44 +627,69 @@ impl<'a> FeatGraph<'a> {
 }
 
 #[derive(Copy, Clone)]
-pub struct Pid<'a>(usize, &'a Metadata);
+pub struct Pid<'a> {
+    /// key for this package in cargo metadata index
+    key: usize,
+    metadata: &'a Metadata,
+}
+
+fn is_proc_macro(package: &Package) -> bool {
+    package
+        .targets
+        .iter()
+        .any(|t| t.kind.contains(&cargo_metadata::TargetKind::ProcMacro))
+}
 
 impl<'a> Pid<'a> {
     #[must_use]
     pub fn package(self) -> &'a cargo_metadata::Package {
-        &self.1.packages[self.0]
+        &self.metadata.packages[self.key]
+    }
+
+    pub fn is_proc_macro(self) -> bool {
+        is_proc_macro(self.package())
     }
 }
 
 impl<'a> Pid<'a> {
     #[must_use]
-    pub fn root(self) -> Fid<'a> {
+    pub fn root(self, instance: CrateInstance) -> Fid<'a> {
         if self.package().features.contains_key("default") {
-            self.named("default")
+            self.named("default", instance)
         } else {
-            self.base()
+            self.base(instance)
         }
     }
 
     #[must_use]
-    pub const fn base(self) -> Fid<'a> {
+    pub const fn base(self, instance: CrateInstance) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Base,
+            instance,
         }
     }
     #[must_use]
-    pub const fn named(self, name: &'a str) -> Fid<'a> {
+    pub const fn named(self, name: &'a str, instance: CrateInstance) -> Fid<'a> {
         Fid {
             pid: self,
             dep: Feat::Named(name),
+            instance,
+        }
+    }
+    #[must_use]
+    pub const fn dep_node(self, name: &'a str, instance: CrateInstance) -> Fid<'a> {
+        Fid {
+            pid: self,
+            dep: Feat::Dep(name),
+            instance,
         }
     }
 }
 
 impl<'a> PartialEq for Pid<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.key == other.key
     }
 }
 
@@ -516,14 +703,14 @@ impl<'a> PartialOrd for Pid<'a> {
 
 impl<'a> Ord for Pid<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
+        self.key.cmp(&other.key)
     }
 }
 
 impl std::fmt::Debug for Pid<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let meta = &self.1.packages[self.0];
-        write!(f, "Pid({} / {})", self.0, meta.id)
+        let meta = &self.metadata.packages[self.key];
+        write!(f, "Pid({} / {})", self.key, meta.id)
     }
 }
 
@@ -532,6 +719,17 @@ pub struct Fid<'a> {
     /// this feature originates from
     pub pid: Pid<'a>,
     pub dep: Feat<'a>,
+    /// whether this crate instance is compiled for host or target
+    pub instance: CrateInstance,
+}
+
+impl<'a> Fid<'a> {
+    pub(crate) fn name(self) -> Option<&'a str> {
+        match self.dep {
+            Feat::Named(n) => Some(n),
+            Feat::Base | Feat::Dep(_) => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Fid<'_> {
@@ -540,6 +738,11 @@ impl std::fmt::Display for Fid<'_> {
         match self.dep {
             Feat::Base => write!(f, "{id}"),
             Feat::Named(name) => write!(f, "{id}:{name}"),
+            Feat::Dep(name) => write!(f, "{id}:dep:{name}"),
+        }?;
+        match self.instance {
+            CrateInstance::Host => write!(f, " (host)"),
+            CrateInstance::Target => Ok(()),
         }
     }
 }
@@ -549,6 +752,7 @@ impl std::fmt::Display for Feat<'_> {
         match self {
             Feat::Base => f.write_str(":base:"),
             Feat::Named(name) => f.write_str(name),
+            Feat::Dep(name) => write!(f, "dep:{name}"),
         }
     }
 }
@@ -559,6 +763,12 @@ pub enum Feat<'a> {
     Base,
     /// internally defined named feature
     Named(&'a str),
+    /// node representing an optional dependency. The `&'a str` is the
+    /// dependency's name (or rename) and matches the name used to refer
+    /// to it in `dep:<name>` feature syntax. It must NOT be reported as
+    /// a feature of the parent crate, since enabling it means
+    /// enabling the dependency, not a feature of the parent.
+    Dep(&'a str),
 }
 
 impl<'a> GraphWalk<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
@@ -598,7 +808,7 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
         let fid = self.features[*node].fid()?;
         match fid.dep {
             Feat::Base => Some(dot::LabelText::label("octagon")),
-            Feat::Named(_) => None,
+            Feat::Named(_) | Feat::Dep(_) => None,
         }
     }
 
@@ -620,6 +830,11 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
                     Feat::Base => {}
                     Feat::Named(name) => {
                         fmt.push('\n');
+                        fmt.push_str(name);
+                    }
+                    Feat::Dep(name) => {
+                        fmt.push('\n');
+                        fmt.push_str("dep:");
                         fmt.push_str(name);
                     }
                 }
@@ -648,10 +863,20 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     }
 
     fn node_color(&'a self, node: &NodeIndex) -> Option<dot::LabelText<'a>> {
-        self.focus_targets
-            .as_ref()?
-            .contains(node)
-            .then(|| dot::LabelText::LabelStr("pink".into()))
+        if self
+            .focus_targets
+            .as_ref()
+            .is_some_and(|t| t.contains(node))
+        {
+            Some(dot::LabelText::LabelStr("pink".into()))
+        } else if self.features[*node]
+            .fid()
+            .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        {
+            Some(dot::LabelText::LabelStr("lightblue".into()))
+        } else {
+            None
+        }
     }
 
     fn edge_end_arrow(&'a self, _e: &EdgeIndex) -> dot::Arrow {
@@ -671,7 +896,13 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
     }
 
     fn edge_color(&'a self, e: &EdgeIndex) -> Option<dot::LabelText<'a>> {
-        if self.features[*e].optional {
+        let source = self.features.edge_endpoints(*e).unwrap().0;
+        if self.features[source]
+            .fid()
+            .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        {
+            Some(dot::LabelText::label("lightblue"))
+        } else if self.features[*e].optional {
             Some(dot::LabelText::label("grey"))
         } else {
             Some(dot::LabelText::label("black"))
@@ -684,50 +915,74 @@ impl<'a> Labeller<'a, NodeIndex, EdgeIndex> for FeatGraph<'a> {
 }
 
 pub trait HasIndex<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex>;
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex>;
 }
 
 impl HasIndex<'_> for NodeIndex {
-    fn get_index(self, _graph: &mut FeatGraph) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        _graph: &mut FeatGraph,
+        _instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         Ok(self)
     }
 }
 
 impl<'a> HasIndex<'a> for Fid<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        _instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         Ok(graph.fid_index(self))
     }
 }
 
 impl<'a> HasIndex<'a> for Pid<'a> {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         if self.package().features.contains_key("default") {
-            Ok(graph.fid_index(self.named("default")))
+            Ok(graph.fid_index(self.named("default", instance)))
         } else {
-            Ok(graph.fid_index(self.base()))
+            Ok(graph.fid_index(self.base(instance)))
         }
     }
 }
 
 impl<'a> HasIndex<'a> for &'a Package {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         (*graph
             .cache
             .get(&self.id)
             .ok_or_else(|| anyhow::anyhow!("No cached value for {:?}", self.id))?)
-        .get_index(graph)
+        .get_index(graph, instance)
     }
 }
 
 impl<'a> HasIndex<'a> for (&'a Package, &'a str) {
-    fn get_index(self, graph: &mut FeatGraph<'a>) -> anyhow::Result<NodeIndex> {
+    fn get_index(
+        self,
+        graph: &mut FeatGraph<'a>,
+        instance: CrateInstance,
+    ) -> anyhow::Result<NodeIndex> {
         let package_id = &self.0.id;
         let feat = self.1;
         let pid = *graph
             .cache
             .get(package_id)
             .ok_or_else(|| anyhow::anyhow!("No cached value for {package_id:?}"))?;
-        pid.named(feat).get_index(graph)
+        pid.named(feat, instance).get_index(graph, instance)
     }
 }
 
@@ -755,7 +1010,7 @@ impl<'a> From<&'a str> for FeatTarget<'a> {
 
 impl Fid<'_> {
     #[must_use]
-    /// Create a base feature from possibly named one
+    /// Create a base feature from possibly named one, preserving instance
     pub const fn get_base(&self) -> Self {
         Self {
             dep: Feat::Base,

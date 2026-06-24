@@ -1,13 +1,12 @@
 #![allow(clippy::similar_names)]
 
 use crate::{
-    feat_graph::{Feat, FeatGraph, Pid},
+    feat_graph::{CrateInstance, Feat, FeatGraph, Pid},
     metadata::DepKindInfo,
     source::ChangePackage,
     toml::set_dependencies,
 };
-use cargo_metadata::Metadata;
-use cargo_platform::Cfg;
+use cargo_metadata::{Metadata, cargo_platform::Cfg};
 use petgraph::{
     graph::NodeIndex,
     visit::{Dfs, DfsPostOrder, EdgeFiltered, EdgeRef, NodeFiltered, VisitMap, Walker},
@@ -23,16 +22,14 @@ fn force_config(var: &mut bool, name: &str, meta: &serde_json::Value) -> Option<
 pub fn hack(
     dry: bool,
     mut lock: bool,
-    mut no_dev: bool,
     meta: &Metadata,
     triplets: Vec<&str>,
     cfgs: Vec<Cfg>,
 ) -> anyhow::Result<bool> {
     force_config(&mut lock, "lock", &meta.workspace_metadata);
-    force_config(&mut no_dev, "no-dev", &meta.workspace_metadata);
 
     let mut fg = FeatGraph::init(meta, triplets, cfgs)?;
-    let changeset = get_changeset(&mut fg, no_dev)?;
+    let changeset = get_changeset(&mut fg)?;
     let has_changes = !changeset.is_empty();
 
     if dry {
@@ -55,7 +52,7 @@ pub fn hack(
             println!("{path}");
             for change in changeset {
                 let t = match change.ty {
-                    Ty::Dev => "dev ",
+                    Ty::Build => "build ",
                     Ty::Norm => "",
                 };
                 println!(
@@ -124,7 +121,7 @@ pub enum Collect<'a> {
     /// current target only, normal and build dependencies globally, dev dependencies for workspace
     DevTarget,
     NoDev,
-    MemberDev(Pid<'a>),
+    MemberBuild(Pid<'a>),
 }
 
 // we are doing 4 types of passes:
@@ -148,7 +145,7 @@ fn collect_features_from<M>(
         // last_edge.set(Some(e));
         match filter {
             Collect::AllTargets => true,
-            Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberDev(_) => e
+            Collect::Target | Collect::NoDev | Collect::DevTarget | Collect::MemberBuild(_) => e
                 .weight()
                 .satisfies(fg.features[e.source()], filter, &fg.platforms, &fg.cfgs),
             Collect::NormalOnly => e.weight().is_normal(),
@@ -157,22 +154,24 @@ fn collect_features_from<M>(
 
     loop {
         while let Some(ix) = dfs.next(&g) {
-            if let Some(fid) = fg.features[ix].fid() {
-                if let Some(parent) = fg.fid_cache.get(&fid.get_base()) {
-                    to.entry(*parent).or_default().insert(ix);
-                }
+            if let Some(fid) = fg.features[ix].fid()
+                && let Some(parent) = fg.fid_cache.get(&fid.get_base())
+            {
+                to.entry(*parent).or_default().insert(ix);
             }
         }
         for t in fg.triggers.iter() {
-            let package = fg.fid_cache[&t.package.base().get_base()];
-            let feature = fg.fid_cache[&t.feature]; // .unwrap();
+            let package = fg.fid_cache[&t.package.base(t.feature.instance).get_base()];
+            let feature = fg.fid_cache[&t.feature];
             let weak_dep = fg.fid_cache[&t.weak_dep];
             let weak_feat = fg.fid_cache[&t.weak_feat];
 
-            if let Some(dep) = to.get(&package) {
-                if dep.contains(&feature) && dep.contains(&weak_dep) && added.insert(weak_feat) {
-                    to_visit.push(weak_feat);
-                }
+            if let Some(dep) = to.get(&package)
+                && dep.contains(&feature)
+                && dep.contains(&weak_dep)
+                && added.insert(weak_feat)
+            {
+                to_visit.push(weak_feat);
             }
         }
 
@@ -186,7 +185,7 @@ fn collect_features_from<M>(
 
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Ty {
-    Dev,
+    Build,
     Norm,
 }
 
@@ -194,7 +193,7 @@ impl Ty {
     #[must_use]
     pub const fn table_name(&self) -> &'static str {
         match self {
-            Ty::Dev => "dev-dependencies",
+            Ty::Build => "build-dependencies",
             Ty::Norm => "dependencies",
         }
     }
@@ -203,14 +202,24 @@ impl Ty {
 impl std::fmt::Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::Dev => f.write_str("dev"),
+            Ty::Build => f.write_str("build"),
             Ty::Norm => f.write_str("norm"),
         }
     }
 }
 
-pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result<FeatChanges<'a>> {
+pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>) -> anyhow::Result<FeatChanges<'a>> {
     info!("==== Calculating changeset for hack");
+
+    // minimal feature unification:
+    //
+    // 1. collect superset of all the features enabled on a workspace as a whole, separately normal
+    //    and build (proc macro) dependencies
+    //
+    // 2. for every workspace member, starting from leaves look for all their dependencies. For
+    //    every dependency crate, look for features not present on that crate but present in the
+    //    workspace. Add this dependency directly to current workspace member with missing
+    //    workspace features enabled
 
     //    dump(fg)?;
     let mut changed = BTreeMap::new();
@@ -226,7 +235,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         &mut Dfs::new(&fg.features, fg.root),
         fg,
         &mut raw_workspace_feats,
-        Collect::NormalOnly,
+        Collect::NoDev,
     );
 
     // For reasons unknown cargo resolves dependencies for all the targets including those
@@ -241,6 +250,16 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         Collect::Target,
     );
     raw_workspace_feats.retain(|k, _| filtered_workspace_feats.contains_key(k));
+
+    let filtered_workspace_host_feats: DetachedDepTree = filtered_workspace_feats
+        .iter()
+        .filter(|(key, _)| {
+            fg.features[**key]
+                .fid()
+                .is_some_and(|fid| fid.instance == CrateInstance::Host)
+        })
+        .map(|(&k, v)| (k, v.clone()))
+        .collect();
 
     info!(
         "Accumulated workspace dependencies{}",
@@ -266,10 +285,15 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                 seen.insert(pid);
 
                 let package = pid.package();
-                let fid = if package.features.contains_key("default") {
-                    pid.named("default")
+                let instance = if pid.is_proc_macro() {
+                    CrateInstance::Host
                 } else {
-                    pid.base()
+                    CrateInstance::Target
+                };
+                let fid = if package.features.contains_key("default") {
+                    pid.named("default", instance)
+                } else {
+                    pid.base(instance)
                 };
                 if let Some(&ix) = fg.fid_cache.get(&fid) {
                     res.push((pid, ix));
@@ -299,32 +323,40 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             );
 
             for (&dep, feats) in &deps_feats {
-                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                    if ws_feats != feats {
-                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                            info!("\t{member:?} lacks {}", fg.features[missing_feat]);
+                if let Some(ws_feats) = raw_workspace_feats.get(&dep)
+                    && ws_feats != feats
+                    && let Some(&missing_feat) = ws_feats.difference(feats).next()
+                {
+                    info!("\t{member:?} lacks {}", fg.features[missing_feat]);
 
-                            changed
-                                .entry(member)
-                                .or_insert_with(BTreeMap::default)
-                                .insert((Ty::Norm, dep), ws_feats.clone());
+                    let ty = if let Some(fid) = fg.features[missing_feat].fid()
+                        && (fid.instance == CrateInstance::Host || fid.pid.is_proc_macro())
+                    {
+                        Ty::Build
+                    } else {
+                        Ty::Norm
+                    };
 
-                            let new_dep =
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::NORMAL)?;
-                            dfs.move_to(new_dep);
+                    changed
+                        .entry(member)
+                        .or_insert_with(BTreeMap::default)
+                        .insert((ty, dep), ws_feats.clone());
 
-                            trace!("Performing one more iteration on {member:?}");
-                            continue 'dependency;
-                        }
-                    }
+                    let new_dep = fg.add_edge(
+                        member_ix,
+                        missing_feat,
+                        false,
+                        DepKindInfo::NORMAL,
+                        CrateInstance::Target,
+                    )?;
+                    dfs.move_to(new_dep);
+
+                    trace!("Performing one more iteration on {member:?}");
+                    continue 'dependency;
                 }
             }
 
             break;
-        }
-
-        if no_dev {
-            continue;
         }
 
         // at this point dep_feats contains all the normal features used by {member}.
@@ -333,45 +365,54 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
             .package()
             .dependencies
             .iter()
-            .any(|d| d.kind == cargo_metadata::DependencyKind::Development)
+            .any(|d| d.kind == cargo_metadata::DependencyKind::Build)
         {
-            debug!("No dev dependencies for {member:?}, skipping");
+            debug!("No build dependencies for {member:?}, skipping");
             continue;
         }
 
         let mut dfs = Dfs::new(&fg.features, member_ix);
-        let mut dev_feats = BTreeMap::new();
-        'dev_dependency: loop {
+        let mut build_feats = BTreeMap::new();
+        'build_dependency: loop {
             // DFS traverse of the current member and everything below it
-            collect_features_from(&mut dfs, fg, &mut dev_feats, Collect::MemberDev(member));
+            collect_features_from(&mut dfs, fg, &mut build_feats, Collect::MemberBuild(member));
 
-            dev_feats.retain(|key, _val| filtered_workspace_feats.contains_key(key));
+            build_feats.retain(|key, _| {
+                fg.features[*key]
+                    .fid()
+                    .is_some_and(|fid| fid.instance == CrateInstance::Host)
+                    && filtered_workspace_host_feats.contains_key(key)
+            });
 
             debug!(
-                "Accumulated dev deps for {:?} are as following:{}",
+                "Accumulated build deps for {:?} are as following:{}",
                 member.package().name,
-                show_detached_dep_tree(&dev_feats, fg),
+                show_detached_dep_tree(&build_feats, fg),
             );
 
-            for (&dep, feats) in &dev_feats {
-                if let Some(ws_feats) = raw_workspace_feats.get(&dep) {
-                    if ws_feats != feats {
-                        if let Some(&missing_feat) = ws_feats.difference(feats).next() {
-                            debug!("\t{member:?} lacks dev {}", fg.features[missing_feat]);
+            for (&dep, feats) in &build_feats {
+                if let Some(ws_feats) = filtered_workspace_host_feats.get(&dep)
+                    && ws_feats != feats
+                    && let Some(&missing_feat) = ws_feats.difference(feats).next()
+                {
+                    debug!("\t{member:?} lacks build {}", fg.features[missing_feat]);
 
-                            changed
-                                .entry(member)
-                                .or_insert_with(BTreeMap::default)
-                                .insert((Ty::Dev, dep), ws_feats.clone());
+                    changed
+                        .entry(member)
+                        .or_insert_with(BTreeMap::default)
+                        .insert((Ty::Build, dep), ws_feats.clone());
 
-                            let new_dep =
-                                fg.add_edge(member_ix, missing_feat, false, DepKindInfo::DEV)?;
-                            dfs.move_to(new_dep);
+                    let new_dep = fg.add_edge(
+                        member_ix,
+                        missing_feat,
+                        false,
+                        DepKindInfo::BUILD,
+                        CrateInstance::Target,
+                    )?;
+                    dfs.move_to(new_dep);
 
-                            trace!("Performing one more dev iteration on {member:?}");
-                            continue 'dev_dependency;
-                        }
-                    }
+                    trace!("Performing one more dev iteration on {member:?}");
+                    continue 'build_dependency;
                 }
             }
 
@@ -386,7 +427,7 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
         use std::cell::RefCell;
         let mut deps = BTreeMap::new();
         let cell = RefCell::new(&mut deps);
-        let package_index = match fg.fid_cache.get(&package.root()) {
+        let package_index = match fg.fid_cache.get(&package.root(CrateInstance::Target)) {
             Some(ix) => ix,
             None => continue,
         };
@@ -428,11 +469,17 @@ pub fn get_changeset<'a>(fg: &mut FeatGraph<'a>, no_dev: bool) -> anyhow::Result
                         .filter_map(|f| match fg.features[*f].fid()?.dep {
                             Feat::Base => None,
                             Feat::Named(name) => Some(name.to_string()),
+                            // `Feat::Dep` is the node that represents an
+                            // optional dependency being enabled, not a
+                            // feature of the parent crate. Enabling it
+                            // means turning the optional dep on, so it
+                            // doesn't belong in the parent's feature list.
+                            Feat::Dep(_) => None,
                         })
                         .collect::<BTreeSet<_>>();
                     let rename = renames
                         .get(&pid)
-                        .map_or(false, |names| names.contains(&package.package().name));
+                        .is_some_and(|names| names.contains(&package.package().name));
                     Some(FeatChange {
                         pid: package,
                         ty,

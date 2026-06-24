@@ -1,0 +1,26 @@
+# Workspace A: Basic Feature Unification
+#
+# Tests: regular dependencies are unified across workspace members
+#
+# When alpha depends on common with features ["a", "b"]
+# and beta depends on common with features ["b", "c"],
+# the unified resolution should enable features ["a", "b", "c"] on common.
+
+[workspace]
+name = "unify_basic"
+
+[[crates]]
+name = "common"
+features = { a = [], b = [], c = [], d = [], default = ["b"] }
+
+[[crates]]
+name = "alpha"
+dependencies = { common = { features = ["a", "b"] } }
+
+[[crates]]
+name = "beta"
+dependencies = { common = { features = ["b", "c"] } }
+
+[[crates]]
+name = "gamma"
+dependencies = { common = { features = ["c", "d"], default-features = false } }
