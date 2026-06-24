@@ -283,7 +283,7 @@ fn restore_toml(toml: &mut DocumentMut) -> anyhow::Result<bool> {
     let hackerman = get_table(toml, HACKERMAN_PATH)?;
     let mut changed = hackerman.remove("lock").is_some();
 
-    for ty in ["dependencies", "dev-dependencies"] {
+    for ty in ["dependencies", "dev-dependencies", "build-dependencies"] {
         let stash = match get_table(toml, STASH_PATH)?.remove(ty) {
             Some(Item::Table(t)) => t,
             Some(_) => anyhow::bail!("corrupted stash table"),
